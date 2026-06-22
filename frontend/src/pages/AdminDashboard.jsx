@@ -19,10 +19,10 @@ const AdminDashboard = () => {
             Lakehouse
           </h1>
         </div>
-        
+
         <nav className="flex-1 p-4 space-y-2 mt-4">
           <div className="text-xs text-slate-400 uppercase font-semibold mb-2">Quản trị hệ thống</div>
-          
+
           {/* Chuyển <a> thành <button> hoặc <div> để hết cảnh báo */}
           <button className="w-full text-left py-3 px-4 rounded bg-blue-600 shadow hover:bg-blue-700 transition">
             📊 Báo cáo Tổng hợp (Gold)
@@ -34,7 +34,7 @@ const AdminDashboard = () => {
             👥 Quản lý Người dùng
           </button>
         </nav>
-        
+
         <div className="p-6 border-t border-slate-800">
           <div className="flex items-center space-x-3 mb-4">
             <div className="w-10 h-10 rounded-full bg-teal-500 flex items-center justify-center font-bold text-lg">A</div>
@@ -43,7 +43,7 @@ const AdminDashboard = () => {
               <p className="text-xs text-slate-400">Admin</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={handleLogout}
             className="w-full text-center py-2 bg-slate-800 hover:bg-red-600 text-slate-300 hover:text-white rounded transition"
           >
@@ -68,8 +68,9 @@ const AdminDashboard = () => {
             {/* NHÚNG SUPERSET VÀO ĐÂY */}
             <div className="flex-1 bg-gray-100 flex items-center justify-center">
               {/* Bạn sẽ thay src bằng đường dẫn embed thực tế của Superset (port 8088) */}
-              <iframe 
-                src="http://localhost:8088/login/" 
+              <iframe
+                src="http://localhost:8088/login/"
+                
                 title="Superset Dashboard"
                 className="w-full h-full border-0"
               />

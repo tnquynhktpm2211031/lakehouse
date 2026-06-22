@@ -16,14 +16,14 @@ const Login = ({ setToken, setRole }) => {
       formData.append('username', username);
       formData.append('password', password);
 
-      // Gọi API đến backend FastAPI
-      const res = await axios.post('http://localhost:8000/login', formData);
+
+      const res = await axios.post(import.meta.env.VITE_API_URL + '/login', formData);
       const { access_token, role } = res.data;
-      
+
       // Lưu vào LocalStorage để duy trì phiên đăng nhập
       localStorage.setItem('token', access_token);
       localStorage.setItem('role', role);
-      
+
       // Kiểm tra bảo mật nếu props setToken/setRole có tồn tại thì mới chạy
       if (typeof setToken === 'function') setToken(access_token);
       if (typeof setRole === 'function') setRole(role);
@@ -60,28 +60,28 @@ const Login = ({ setToken, setRole }) => {
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Tài khoản</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 placeholder="Nhập tài khoản "
                 className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                value={username} 
-                onChange={(e) => setUsername(e.target.value)} 
-                required 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
               />
             </div>
             <div>
               <label className="block text-sm font-semibold text-gray-700 mb-1">Mật khẩu</label>
-              <input 
-                type="password" 
+              <input
+                type="password"
                 placeholder="Nhập mật khẩu"
                 className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition"
-                value={password} 
-                onChange={(e) => setPassword(e.target.value)} 
-                required 
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
               />
             </div>
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:shadow-lg transition duration-200 mt-2"
             >
               Đăng nhập hệ thống
