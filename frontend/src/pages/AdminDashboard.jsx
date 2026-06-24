@@ -67,9 +67,9 @@ const AdminDashboard = () => {
             </div>
             {/* NHÚNG SUPERSET VÀO ĐÂY */}
             <div className="flex-1 bg-gray-100 flex items-center justify-center">
-              {/* Bạn sẽ thay src bằng đường dẫn embed thực tế của Superset (port 8088) */}
+             
               <iframe
-                src="http://localhost:8088/login/"
+                src="http://localhost:8088/superset/dashboard/1/?native_filters_key=8TNRVjTeKm37iM9LWUB6EX-Z6hUKzsb-3BK6RuTaYCHmOLIwd75IMSdjyh913EeT"
                 
                 title="Superset Dashboard"
                 className="w-full h-full border-0"

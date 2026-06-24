@@ -19,3 +19,4 @@ app.include_router(upload.router, prefix="/api", tags=["Upload"])
 @app.get("/")
 async def root():
     return {"message": "Welcome to Lakehouse API!"}
+    

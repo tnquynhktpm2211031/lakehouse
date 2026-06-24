@@ -10,6 +10,9 @@ from pyspark.sql.types import StructType, StructField, StringType, DoubleType, T
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 os.environ["PATH"] = r"C:\hadoop\bin;" + os.environ.get("PATH", "")
 
+# 💡 FIX LỖI BLOCKMANAGER / NULLPOINTEREXCEPTION TRÊN WINDOWS
+os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
+
 spark = (
     SparkSession.builder
     .appName("Gov-Bronze-To-Silver-ETL")
@@ -25,6 +28,7 @@ spark = (
     .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
     .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
     .config("spark.hadoop.fs.s3a.path.style.access", "true")
+    .config("spark.hadoop.io.nativeio.NativeIO", "false") # Thêm cấu hình chống lỗi Windows
     .config("spark.sql.shuffle.partitions", "4")
     .getOrCreate()
 )
@@ -75,12 +79,18 @@ extract_udf = udf(extract_info_from_text, nlp_schema)
 # =========================================================================
 # 3. ĐỌC DỮ LIỆU TỪ TẦNG BRONZE VÀ LÀM SẠCH (DATA CLEANSING & MAPPING)
 # =========================================================================
-bronze_path = "s3a://university-lakehouse/bronze/ho_so_tich_hop/"
+
+# 💡 LOẠI BỎ THƯ MỤC CŨ: Chỉ đọc từ thư mục chuẩn của luồng hệ thống
+bronze_paths = [
+        "s3a://university-lakehouse/bronze/structured_data/",
+        "s3a://university-lakehouse/bronze/unstructured_data/"
+    ]
 
 # BÍ QUYẾT FIX LỖI WRONG FS S3A: Lấy đúng hệ thống file của đường dẫn
 hadoop_conf = spark.sparkContext._jsc.hadoopConfiguration()
-path = spark._jvm.org.apache.hadoop.fs.Path(bronze_path)
-fs = path.getFileSystem(hadoop_conf)
+for bronze_path in bronze_paths:
+    path = spark._jvm.org.apache.hadoop.fs.Path(bronze_path)
+    fs = path.getFileSystem(hadoop_conf)
 
 if not fs.exists(path):
     fs.mkdirs(path)
@@ -100,7 +110,7 @@ schema_bronze = StructType([
 ])
 
 # Đọc luồng dữ liệu thô
-df_bronze_stream = spark.readStream.schema(schema_bronze).parquet(bronze_path)
+df_bronze_stream = spark.readStream.schema(schema_bronze).parquet(bronze_paths[0])
 
 # Thực hiện ETL
 df_silver_stream = (
@@ -122,9 +132,11 @@ query = (
     .format("iceberg")
     .outputMode("append")
     .trigger(processingTime="1 minute")
-    .option("checkpointLocation", "s3a://university-lakehouse/checkpoints/silver/ho_so_tich_hop")
+    # 💡 TẠO CHECKPOINT MỚI TINH ĐỂ TRÁNH XUNG ĐỘT
+    .option("checkpointLocation", "s3a://university-lakehouse/checkpoints/silver/ho_so_structured_etl_new")
     .toTable("lakehouse.silver.ho_so_tich_hop")
 )
 
 print("\n[*] Quá trình Streaming Bronze -> Silver (ETL + NLP + Iceberg) đang chạy...")
+print(f"[*] Nguồn đang lắng nghe: {bronze_path}")
 query.awaitTermination()

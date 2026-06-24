@@ -11,21 +11,33 @@ print("\n=========================================================")
 print(" SCRIPT NẠP DỮ LIỆU ĐA ĐỊNH DẠNG VÀO TẦNG BRONZE")
 print("=========================================================\n")
 
+# 🛡️ Khởi tạo Spark với BỘ KHIÊN CHỐNG LỖI ĐẦY ĐỦ NHẤT
 spark = (
     SparkSession.builder
     .appName("Gov-Omni-Ingestion-Bronze")
     .master("local[*]")
     .config("spark.driver.host", "127.0.0.1")
     .config("spark.driver.bindAddress", "127.0.0.1")
+    
+    # Cấu hình kết nối MinIO
     .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
     .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
     .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
     .config("spark.hadoop.fs.s3a.path.style.access", "true")
     .config("spark.hadoop.io.nativeio.NativeIO", "false")
+    
+    # 🔥 FIX CÁC LỖI ÉP KIỂU THỜI GIAN (Bẻ cổ bọn 60s, 30s, 24h)
+    .config("spark.hadoop.fs.s3a.connection.timeout", "60000")
+    .config("spark.hadoop.fs.s3a.connection.establish.timeout", "30000")
+    .config("spark.hadoop.fs.s3a.connection.request.timeout", "60000")
+    .config("spark.hadoop.fs.s3a.threads.keepalivetime", "60")
+    .config("spark.hadoop.fs.s3a.multipart.purge.age", "86400") # Trùm cuối 24h đã bị tiêu diệt
+    
+    # 🔥 FIX LỖI "ClassNotFoundException" AWS Credentials
+    .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
+    
     .getOrCreate()
 )
-
-spark.sparkContext._jsc.hadoopConfiguration().set("fs.s3a.connection.timeout", "60000")
 
 try:
     data_dir = r"D:\Myfolder\University\ThucTap\university-lakehouse\data_local"
@@ -33,7 +45,6 @@ try:
     if not os.path.exists(data_dir):
         print(f"--- Thư mục {data_dir} không tồn tại ---")
     else:
-        # Dùng os.listdir thay cho glob để quét sạch mọi file
         files_in_dir = os.listdir(data_dir)
 
         if not files_in_dir:
@@ -42,11 +53,8 @@ try:
             for file_name in files_in_dir:
                 file_path = os.path.join(data_dir, file_name)
 
-                # Bỏ qua nếu là thư mục con, chỉ xử lý file
                 if os.path.isfile(file_path):
-                    # Lấy đuôi file và chuyển hết về chữ thường để không bị miss file .PNG hay .JPG
                     file_ext = file_name.split('.')[-1].lower()
-
                     print(f"\n--- Đang xử lý file: {file_name} ---")
 
                     # 1. DỮ LIỆU CÓ CẤU TRÚC (CSV)
@@ -54,28 +62,27 @@ try:
                         df = spark.read.csv(file_path, header=True, inferSchema=True)
                         bronze_path = "s3a://university-lakehouse/bronze/structured_data/"
                         df.write.mode("append").parquet(bronze_path)
-                        print(f" Ghi thành công CSV dạng Parquet vào: {bronze_path}")
+                        print(f"✅ Ghi thành công CSV dạng Parquet vào: {bronze_path}")
 
                     # 2. DỮ LIỆU BÁN CẤU TRÚC (JSON)
                     elif file_ext == 'json':
                         df = spark.read.json(file_path)
                         bronze_path = "s3a://university-lakehouse/bronze/semi_structured_data/"
                         df.write.mode("append").parquet(bronze_path)
-                        print(f" Ghi thành công JSON dạng Parquet vào: {bronze_path}")
+                        print(f"✅ Ghi thành công JSON dạng Parquet vào: {bronze_path}")
 
                     # 3. DỮ LIỆU PHI CẤU TRÚC (PDF, DOCX, TXT, Hình ảnh)
                     elif file_ext in ['pdf', 'doc', 'docx', 'txt', 'png', 'jpg', 'jpeg']:
-                        # Dùng binaryFile để lưu thô định dạng byte
                         df_binary = spark.read.format("binaryFile").load(file_path)
                         bronze_path = "s3a://university-lakehouse/bronze/unstructured_data/"
                         df_binary.write.mode("append").parquet(bronze_path)
-                        print(f" Ghi thành công Phi cấu trúc dạng Parquet vào: {bronze_path}")
+                        print(f"✅ Ghi thành công Phi cấu trúc dạng Parquet vào: {bronze_path}")
 
                     else:
-                        print(f"Bỏ qua định dạng chưa hỗ trợ: {file_name}")
+                        print(f"⏩ Bỏ qua định dạng chưa hỗ trợ: {file_name}")
 
 except Exception as e:
-    print(f"\n LỖI TRONG QUÁ TRÌNH NẠP DỮ LIỆU: {str(e)}")
+    print(f"\n❌ LỖI TRONG QUÁ TRÌNH NẠP DỮ LIỆU: {str(e)}")
 
 finally:
     print("\n--- Đang đóng tiến trình Spark Session ---")

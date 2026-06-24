@@ -18,6 +18,7 @@ const Login = ({ setToken, setRole }) => {
 
 
       const res = await axios.post(import.meta.env.VITE_API_URL + '/login', formData);
+      console.log('Login response:', res.data); // Debug: In ra dữ liệu phản hồi từ server
       const { access_token, role } = res.data;
 
       // Lưu vào LocalStorage để duy trì phiên đăng nhập

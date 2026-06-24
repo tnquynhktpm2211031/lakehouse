@@ -12,8 +12,8 @@ spark = (
     SparkSession.builder
     .appName("Gov-Streaming-To-Bronze")
     .master("local[*]")
-    .config("spark.driver.host", "127.0.0.1")
-    .config("spark.driver.bindAddress", "127.0.0.1")
+    #.config("spark.driver.host", "127.0.0.1")
+    #.config("spark.driver.bindAddress", "127.0.0.1")
     .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
     .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
     .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
