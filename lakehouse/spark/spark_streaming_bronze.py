@@ -1,67 +1,98 @@
+"""
+spark_streaming_bronze.py
+------------------------------------------------------------
+Đọc luồng sự kiện KPI CUSC từ Kafka (topic: cusc_kpi_events),
+parse JSON theo schema chuẩn, rồi ghi liên tục (streaming append)
+vào bronze/cusc_kpi_stream/ trên MinIO dưới dạng Parquet.
+
+Chạy: python spark_streaming_bronze.py
+Dừng: Ctrl+C (checkpoint đã lưu, chạy lại sẽ tiếp tục từ vị trí cũ)
+------------------------------------------------------------
+"""
+
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, from_json 
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType, TimestampType
+from pyspark.sql.functions import col, from_json
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
-# 🛠️ KHIÊN CHỐNG LỖI WINDOWS & THƯ VIỆN ĐẦY ĐỦ
+# ============================================================
+# CẤU HÌNH MÔI TRƯỜNG WINDOWS & HADOOP
+# ============================================================
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 os.environ["PATH"] = r"C:\hadoop\bin;" + os.environ.get("PATH", "")
-os.environ["PYSPARK_SUBMIT_ARGS"] = "--packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.104.5,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 pyspark-shell"
-
-spark = (
-    SparkSession.builder
-    .appName("Gov-Streaming-To-Bronze")
-    .master("local[*]")
-    #.config("spark.driver.host", "127.0.0.1")
-    #.config("spark.driver.bindAddress", "127.0.0.1")
-    .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
-    .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
-    .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
-    .config("spark.hadoop.fs.s3a.path.style.access", "true")
-    .config("spark.hadoop.io.nativeio.NativeIO", "false")
-    .getOrCreate()
-)
-spark.sparkContext.setLogLevel("WARN")
-
-schema_tich_hop = StructType([
-    StructField("ma_ho_so", StringType(), True),
-    StructField("nguon_du_lieu", StringType(), True),
-    StructField("ma_cong_dan", StringType(), True),
-    StructField("loai_tai_lieu", StringType(), True),
-    StructField("trang_thai_ho_so", StringType(), True), 
-    StructField("trang_thai_chu_ky_so", StringType(), True),
-    StructField("diem_thi_danh_gia", DoubleType(), True),
-    StructField("thoi_gian_tiep_nhan", TimestampType(), True)
-])
-
-df_kafka = (
-    spark.readStream
-    .format("kafka")
-    .option("kafka.bootstrap.servers", "localhost:9094")
-    .option("subscribe", "gov_admin_events")
-    .option("startingOffsets", "latest")
-    .load()
+os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
+os.environ["PYSPARK_SUBMIT_ARGS"] = (
+    "--packages "
+    "org.apache.hadoop:hadoop-aws:3.3.4,"
+    "com.amazonaws:aws-java-sdk-bundle:1.12.262,"
+    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
+    "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.104.5,"
+    "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 "
+    "pyspark-shell"
 )
 
-df_parsed = (
-    df_kafka
-    .selectExpr("CAST(value AS STRING) as json_data")
-    .select(from_json(col("json_data"), schema_tich_hop).alias("data"))
-    .select("data.*")
+KAFKA_BOOTSTRAP_SERVERS = "localhost:9094"
+KAFKA_TOPIC = "cusc_kpi_events"
+
+BRONZE_STREAM_PATH = "s3a://university-lakehouse/bronze/cusc_kpi_stream/"
+CHECKPOINT_PATH = "s3a://university-lakehouse/checkpoints/bronze_cusc_kpi_stream/"
+
+# Schema khớp với dữ liệu do mock_cusc_kpi.py gửi lên Kafka
+SCHEMA_CUSC = StructType(
+    [
+        StructField("ma_chi_tieu", StringType(), True),
+        StructField("nhom_don_vi", StringType(), True),  # QTCL, RD, HT, VP...
+        StructField("quy_danh_gia", StringType(), True),
+        StructField("ket_qua_he_thong", StringType(), True),
+        StructField("thoi_gian_cap_nhat", TimestampType(), True),
+    ]
 )
 
-# Ghi vào vùng Bronze dành riêng cho Streaming
-bronze_stream_path = "s3a://university-lakehouse/bronze/ho_so_stream/"
-checkpoint_path = "s3a://university-lakehouse/checkpoints/bronze_ho_so_stream/"
 
-query = (
-    df_parsed.writeStream
-    .format("parquet")
-    .outputMode("append")
-    .option("path", bronze_stream_path)
-    .option("checkpointLocation", checkpoint_path)
-    .start()
-)
+def build_spark_session() -> SparkSession:
+    return (
+        SparkSession.builder.appName("CUSC-Streaming-To-Bronze")
+        .master("local[*]")
+        .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
+        .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
+        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
+        .config("spark.hadoop.fs.s3a.path.style.access", "true")
+        .config("spark.hadoop.io.nativeio.NativeIO", "false")
+        .getOrCreate()
+    )
 
-print("=== STREAM TỪ TRỤC LIÊN THÔNG ĐÃ KHỞI ĐỘNG ===")
-query.awaitTermination()
+
+def main():
+    spark = build_spark_session()
+    spark.sparkContext.setLogLevel("WARN")
+
+    df_kafka = (
+        spark.readStream.format("kafka")
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP_SERVERS)
+        .option("subscribe", KAFKA_TOPIC)
+        .option("startingOffsets", "latest")
+        .load()
+    )
+
+    df_parsed = (
+        df_kafka.selectExpr("CAST(value AS STRING) as json_data")
+        .select(from_json(col("json_data"), SCHEMA_CUSC).alias("data"))
+        .select("data.*")
+    )
+
+    query = (
+        df_parsed.writeStream.format("parquet")
+        .outputMode("append")
+        .option("path", BRONZE_STREAM_PATH)
+        .option("checkpointLocation", CHECKPOINT_PATH)
+        .start()
+    )
+
+    print("=== STREAM KPI CUSC ĐÃ KHỞI ĐỘNG ===")
+    print(f"    Kafka topic     : {KAFKA_TOPIC}")
+    print(f"    Ghi dữ liệu vào : {BRONZE_STREAM_PATH}")
+    query.awaitTermination()
+
+
+if __name__ == "__main__":
+    main()

@@ -14,16 +14,6 @@ function App() {
   const [role, setRole] = useState(localStorage.getItem("role") || "");
 
 
-  setToken("cqcwd");
-
-
-  useEffect(() => {
-    // Update localStorage whenever the token changes
-    localStorage.setItem("token", token);
-  }, [token]);
-
-
-
   return (
     <Router>
       <Routes>

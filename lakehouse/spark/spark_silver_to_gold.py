@@ -1,80 +1,106 @@
+"""
+spark_silver_to_gold.py
+------------------------------------------------------------
+Tổng hợp KPI đánh giá CUSC theo quý + nhóm đơn vị từ bảng Silver,
+ghi kết quả vào bảng Iceberg lakehouse.gold.kpi_cusc_dashboard
+(data mart sẵn sàng cho Superset/Trino query).
+
+Yêu cầu chạy trước: python spark_bronze_to_silver.py
+
+FIX so với bản gốc:
+  - Nhãn "chưa đến kỳ" trong dữ liệu thực tế là "CHƯA ĐẾN KỲ ĐÁNH GIÁ"
+    (do spark_ingest_bronze.py chuẩn hoá), nhưng bản gốc lại so sánh
+    với "CHƯA ĐẾN KỲ" -> luôn ra 0. Đã sửa khớp đúng nhãn.
+------------------------------------------------------------
+"""
+
 import os
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, count, when, round, avg
+from pyspark.sql.functions import col, count, when, round as spark_round
 
-# =========================================================================
+# ============================================================
 # CẤU HÌNH MÔI TRƯỜNG WINDOWS & HADOOP
-# =========================================================================
+# ============================================================
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 os.environ["PATH"] = r"C:\hadoop\bin;" + os.environ.get("PATH", "")
-os.environ["PYSPARK_SUBMIT_ARGS"] = "--packages org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262,org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.104.5 pyspark-shell"
-
-# 💡 FIX LỖI BLOCKMANAGER / NULLPOINTEREXCEPTION TRÊN WINDOWS
 os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
-
-spark = (
-    SparkSession.builder
-    .appName("Gov-Direct-Bronze-To-Gold-KPI")
-    .master("local[*]")
-    .config("spark.sql.extensions", "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,org.projectnessie.spark.extensions.NessieSparkSessionExtensions")
-    .config("spark.sql.catalog.lakehouse", "org.apache.iceberg.spark.SparkCatalog")
-    .config("spark.sql.catalog.lakehouse.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
-    .config("spark.sql.catalog.lakehouse.uri", "http://localhost:19120/api/v1")
-    .config("spark.sql.catalog.lakehouse.ref", "main")
-    .config("spark.sql.catalog.lakehouse.warehouse", "s3a://university-lakehouse/iceberg-warehouse")
-    .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
-    .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
-    .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
-    .config("spark.hadoop.fs.s3a.path.style.access", "true")
-    .config("spark.hadoop.io.nativeio.NativeIO", "false")
-    .getOrCreate()
+os.environ["PYSPARK_SUBMIT_ARGS"] = (
+    "--packages "
+    "org.apache.hadoop:hadoop-aws:3.3.4,"
+    "com.amazonaws:aws-java-sdk-bundle:1.12.262,"
+    "org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.5.0,"
+    "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.104.5 "
+    "pyspark-shell"
 )
-spark.sparkContext.setLogLevel("WARN")
 
-try:
-    # 💡 TẠO ĐƯỜNG DẪN MỚI (CREATE NEW PATH)
-    # Đọc trực tiếp từ thư mục Parquet thay vì bảng Iceberg bị lỗi
-    bronze_data_path = "s3a://university-lakehouse/bronze/structured_data/"
-    
-    print(f"\n[1/3] --- Đang đọc trực tiếp dữ liệu từ Bronze: {bronze_data_path} ---")
-    df_ho_so = spark.read.parquet(bronze_data_path)
+SILVER_TABLE = "lakehouse.silver.cusc_chat_luong"
+GOLD_NAMESPACE = "lakehouse.gold"
+GOLD_TABLE = "lakehouse.gold.kpi_cusc_dashboard"
 
-    print("[2/3] --- Tổng hợp KPI 1: Tình trạng xử lý Hành chính công theo Nguồn ---")
-    df_kpi_nguon = (
-        df_ho_so
-        .groupBy("nguon_du_lieu")
-        .agg(
-            count("ma_ho_so").alias("tong_so_ho_so"),
-            count(when(col("trang_thai_chu_ky_so") == "hople", 1)).alias("so_chu_ky_hop_le"),
-            count(when(col("trang_thai_chu_ky_so") == "khonghople", 1)).alias("so_chu_ky_loi")
+# Phải khớp CHÍNH XÁC với nhãn được ghi ở spark_ingest_bronze.py
+KETQUA_DAT = "ĐẠT"
+KETQUA_CHUA_DEN_KY = "CHƯA ĐẾN KỲ ĐÁNH GIÁ"
+
+
+def build_spark_session() -> SparkSession:
+    return (
+        SparkSession.builder.appName("CUSC-Silver-To-Gold-KPI")
+        .master("local[*]")
+        .config(
+            "spark.sql.extensions",
+            "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,"
+            "org.projectnessie.spark.extensions.NessieSparkSessionExtensions",
         )
-        .withColumn("ty_le_chu_ky_hop_le", round(col("so_chu_ky_hop_le") * 100.0 / col("tong_so_ho_so"), 2))
+        .config("spark.sql.catalog.lakehouse", "org.apache.iceberg.spark.SparkCatalog")
+        .config("spark.sql.catalog.lakehouse.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
+        .config("spark.sql.catalog.lakehouse.uri", "http://localhost:19120/api/v1")
+        .config("spark.sql.catalog.lakehouse.ref", "main")
+        .config("spark.sql.catalog.lakehouse.warehouse", "s3a://university-lakehouse/iceberg-warehouse")
+        .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
+        .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
+        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
+        .config("spark.hadoop.fs.s3a.path.style.access", "true")
+        .config("spark.hadoop.io.nativeio.NativeIO", "false")
+        .getOrCreate()
     )
 
-    print("[3/3] --- Tổng hợp KPI 2: Thống kê Điểm thi Bộ GDĐT ---")
-    df_kpi_gddt = (
-        df_ho_so
-        .filter(col("nguon_du_lieu") == "Bo_GDDT")
-        .groupBy("loai_tai_lieu")
-        .agg(
-            round(avg("diem_thi_danh_gia"), 2).alias("diem_trung_binh"),
-            count("ma_ho_so").alias("tong_so_bai_thi")
+
+def main():
+    spark = build_spark_session()
+    spark.sparkContext.setLogLevel("WARN")
+
+    try:
+        print("\n[1/2] --- Đọc dữ liệu từ Silver Iceberg Table ---")
+        df_chat_luong = spark.read.table(SILVER_TABLE)
+
+        print("[2/2] --- Tổng hợp KPI Đánh giá CUSC theo Nhóm Đơn vị ---")
+        df_kpi_cusc = (
+            df_chat_luong.groupBy("quy_danh_gia", "nhom_don_vi")
+            .agg(
+                count("ma_chi_tieu").alias("tong_chi_tieu"),
+                count(when(col("ket_qua") == KETQUA_DAT, 1)).alias("so_chi_tieu_dat"),
+                count(when(col("ket_qua") == KETQUA_CHUA_DEN_KY, 1)).alias("so_chi_tieu_cho"),
+            )
+            .withColumn(
+                "ty_le_hoan_thanh",
+                spark_round((col("so_chi_tieu_dat") / col("tong_chi_tieu")) * 100, 2),
+            )
         )
-    )
 
-    spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.gold")
+        spark.sql(f"CREATE NAMESPACE IF NOT EXISTS {GOLD_NAMESPACE}")
+        print(f"[*] Đang ghi Data Mart: {GOLD_TABLE}...")
+        df_kpi_cusc.writeTo(GOLD_TABLE).createOrReplace()
 
-    print("\n[*] Đang ghi Data Mart: lakehouse.gold.kpi_hanh_chinh...")
-    df_kpi_nguon.writeTo("lakehouse.gold.kpi_hanh_chinh").createOrReplace()
+        print("\n✅ KẾT QUẢ TẦNG GOLD (SẴN SÀNG CHO SUPERSET):")
+        spark.read.table(GOLD_TABLE).show(truncate=False)
 
-    print("[*] Đang ghi Data Mart: lakehouse.gold.kpi_giao_duc...")
-    df_kpi_gddt.writeTo("lakehouse.gold.kpi_giao_duc").createOrReplace()
+    except Exception as ex:
+        print(f"\n❌ LỖI HỆ THỐNG: {str(ex)}")
+        raise
 
-    print("\n✔️ KẾT QUẢ: PIPELINE BRONZE TRỰC TIẾP LÊN GOLD THÀNH CÔNG (SUCCESS)")
-    spark.read.table("lakehouse.gold.kpi_hanh_chinh").show(truncate=False)
+    finally:
+        spark.stop()
 
-except Exception as ex:
-    print("\n❌ LỖI HỆ THỐNG:", str(ex))
-finally:
-    print("\n--- Đang đóng tiến trình Spark Session ---")
-    spark.stop()
+
+if __name__ == "__main__":
+    main()
