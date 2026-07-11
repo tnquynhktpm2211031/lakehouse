@@ -33,19 +33,13 @@ import boto3
 import psycopg2
 from psycopg2 import sql
 
-# --- Cấu hình MinIO ---
-MINIO_ENDPOINT = "http://127.0.0.1:9000"
-MINIO_ACCESS_KEY = "minioadmin"
-MINIO_SECRET_KEY = "minioadmin"
-BUCKET_NAME = "university-lakehouse"
+from env_config import (
+    MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET_NAME,
+    PG_HOST, PG_PORT, PG_USER, PG_PASSWORD, PG_MAINTENANCE_DB, NESSIE_DB,
+)
 
-# --- Cấu hình Postgres (khớp với docker-compose.yml) ---
-PG_HOST = "127.0.0.1"
-PG_PORT = 5432
-PG_USER = "postgres"
-PG_PASSWORD = "240203"
-PG_MAINTENANCE_DB = "postgres"  # DB dùng để kết nối rồi thực hiện DROP/CREATE nessie_db
-NESSIE_DB = "nessie_db"
+# --- Cấu hình MinIO ---
+BUCKET_NAME = MINIO_BUCKET_NAME
 
 
 def clear_minio_bucket():

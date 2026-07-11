@@ -7,8 +7,9 @@ env/
 __pycache__/
 *.pyc
 
-# IDEs
-.vscode/
+# IDEs — giữ lại settings.json để cố định Python interpreter cho cả team
+.vscode/*
+!.vscode/settings.json
 .idea/
 
-metastore_db/
+metastore_db/

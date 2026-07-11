@@ -25,6 +25,7 @@ Biến môi trường cần thiết (đặt trước khi chạy pipeline):
 
 import os
 
+
 # pyrefly: ignore [missing-import]
 from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
     OpenMetadataConnection,
@@ -43,8 +44,7 @@ from metadata.generated.schema.api.lineage.addLineage import AddLineageRequest
 from metadata.generated.schema.type.entityLineage import EntitiesEdge, LineageDetails
 from metadata.generated.schema.type.entityReference import EntityReference
 
-OPENMETADATA_HOST_PORT = os.environ.get("OPENMETADATA_HOST_PORT", "http://localhost:8585/api")
-OPENMETADATA_JWT_TOKEN = os.environ.get("OPENMETADATA_JWT_TOKEN", "")
+from env_config import OPENMETADATA_HOST_PORT, OPENMETADATA_JWT_TOKEN
 
 # Phải khớp với tên bạn đã đặt khi tạo Database Service trên UI OpenMetadata
 SERVICE_NAME = "lakehouse-trino"

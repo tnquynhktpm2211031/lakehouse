@@ -24,12 +24,16 @@ import sys
 from pyspark.sql import SparkSession
 
 from nessie_catalog_utils import create_tag
+from env_config import (
+    MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT,
+    NESSIE_API_URL, HADOOP_HOME, SPARK_LOCAL_IP,
+)
 
-os.environ["HADOOP_HOME"] = r"C:\hadoop"
-os.environ["PATH"] = r"C:\hadoop\bin;" + os.environ.get("PATH", "")
-os.environ["AWS_ACCESS_KEY_ID"] = "minioadmin"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin"
-os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
+os.environ["HADOOP_HOME"]           = HADOOP_HOME
+os.environ["PATH"]                  = os.path.join(HADOOP_HOME, "bin") + ";" + os.environ.get("PATH", "")
+os.environ["AWS_ACCESS_KEY_ID"]     = MINIO_ACCESS_KEY
+os.environ["AWS_SECRET_ACCESS_KEY"] = MINIO_SECRET_KEY
+os.environ["SPARK_LOCAL_IP"]        = SPARK_LOCAL_IP
 os.environ["PYSPARK_SUBMIT_ARGS"] = (
     "--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,"
     "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.77.1 "
@@ -40,20 +44,20 @@ os.environ["PYSPARK_SUBMIT_ARGS"] = (
 def get_spark_session():
     return SparkSession.builder \
         .appName("Nessie_Tag_Release") \
-        .config("spark.driver.host", "127.0.0.1") \
-        .config("spark.driver.bindAddress", "127.0.0.1") \
+        .config("spark.driver.host", SPARK_LOCAL_IP) \
+        .config("spark.driver.bindAddress", SPARK_LOCAL_IP) \
         .config("spark.sql.extensions",
                 "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,"
                 "org.projectnessie.spark.extensions.NessieSparkSessionExtensions") \
         .config("spark.sql.catalog.lakehouse", "org.apache.iceberg.spark.SparkCatalog") \
         .config("spark.sql.catalog.lakehouse.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog") \
-        .config("spark.sql.catalog.lakehouse.uri", "http://localhost:19120/api/v1") \
+        .config("spark.sql.catalog.lakehouse.uri", NESSIE_API_URL) \
         .config("spark.sql.catalog.lakehouse.warehouse", "s3a://university-lakehouse/iceberg-lakehouse") \
-        .config("spark.sql.catalog.lakehouse.s3.endpoint", "http://localhost:9000") \
+        .config("spark.sql.catalog.lakehouse.s3.endpoint", MINIO_ENDPOINT) \
         .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9000") \
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin") \
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin") \
+        .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT) \
+        .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY) \
+        .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY) \
         .config("spark.hadoop.fs.s3a.path.style.access", "true") \
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false") \
         .config("spark.hadoop.fs.s3a.aws.credentials.provider",

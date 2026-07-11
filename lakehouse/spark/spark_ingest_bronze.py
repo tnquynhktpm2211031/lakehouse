@@ -18,12 +18,11 @@ import pandas as pd
 import pdfplumber
 import docx
 
-MINIO_ENDPOINT = "http://127.0.0.1:9000"
-MINIO_ACCESS_KEY = "minioadmin"
-MINIO_SECRET_KEY = "minioadmin"
-BUCKET_NAME = "university-lakehouse"
+from env_config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET_NAME
+
+BUCKET_NAME   = MINIO_BUCKET_NAME
 SOURCE_PREFIX = "bronze/unstructured_data/"
-OUTPUT_KEY = "bronze/structured_data/data_extracted.parquet"
+OUTPUT_KEY    = "bronze/structured_data/data_extracted.parquet"
 
 KETQUA_KHONG_DAT = "KHÔNG ĐẠT"
 KETQUA_DAT = "ĐẠT"

@@ -15,12 +15,14 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, TimestampType
 
+from env_config import MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT, HADOOP_HOME, SPARK_LOCAL_IP
+
 # ============================================================
-# CẤU HÌNH MÔI TRƯỜNG WINDOWS & HADOOP
+# CAU HINH MOI TRUONG WINDOWS & HADOOP
 # ============================================================
-os.environ["HADOOP_HOME"] = r"C:\hadoop"
-os.environ["PATH"] = r"C:\hadoop\bin;" + os.environ.get("PATH", "")
-os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
+os.environ["HADOOP_HOME"]  = HADOOP_HOME
+os.environ["PATH"]         = os.path.join(HADOOP_HOME, "bin") + ";" + os.environ.get("PATH", "")
+os.environ["SPARK_LOCAL_IP"] = SPARK_LOCAL_IP
 os.environ["PYSPARK_SUBMIT_ARGS"] = (
     "--packages "
     "org.apache.hadoop:hadoop-aws:3.3.4,"
@@ -53,9 +55,9 @@ def build_spark_session() -> SparkSession:
     return (
         SparkSession.builder.appName("CUSC-Streaming-To-Bronze")
         .master("local[*]")
-        .config("spark.hadoop.fs.s3a.endpoint", "http://127.0.0.1:9000")
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
+        .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+        .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
+        .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
         .config("spark.hadoop.io.nativeio.NativeIO", "false")
         .getOrCreate()

@@ -24,15 +24,19 @@ from nessie_catalog_utils import (
     DataQualityError,
 )
 from openmetadata_lineage_utils import get_client, push_lineage_safe
+from env_config import (
+    MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT,
+    NESSIE_API_URL, HADOOP_HOME, SPARK_LOCAL_IP,
+)
 
 # --- CẤU HÌNH BIẾN MÔI TRƯỜNG WINDOWS ---
-os.environ["HADOOP_HOME"] = r"C:\hadoop"
-os.environ["PATH"] = r"C:\hadoop\bin;" + os.environ.get("PATH", "")
-os.environ["AWS_ACCESS_KEY_ID"] = "minioadmin"
-os.environ["AWS_SECRET_ACCESS_KEY"] = "minioadmin"
+os.environ["HADOOP_HOME"]           = HADOOP_HOME
+os.environ["PATH"]                  = os.path.join(HADOOP_HOME, "bin") + ";" + os.environ.get("PATH", "")
+os.environ["AWS_ACCESS_KEY_ID"]     = MINIO_ACCESS_KEY
+os.environ["AWS_SECRET_ACCESS_KEY"] = MINIO_SECRET_KEY
 # Bắt buộc trên Windows: tránh Spark bind theo hostname hệ thống gây lỗi
 # Py4JNetworkError / ConnectionResetError ngay khi khởi tạo JavaSparkContext.
-os.environ["SPARK_LOCAL_IP"] = "127.0.0.1"
+os.environ["SPARK_LOCAL_IP"] = SPARK_LOCAL_IP
 
 os.environ["PYSPARK_SUBMIT_ARGS"] = (
     "--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,"
@@ -46,23 +50,23 @@ GOLD_DETAIL_TABLE = "lakehouse.gold.kpi_chi_tiet_dashboard"
 
 
 def get_spark_session():
-    print("⏳ Khởi tạo Spark Engine tính toán số liệu tầng Gold...")
+    print("Khoi tao Spark Engine tinh toan so lieu tang Gold...")
     spark = (
         SparkSession.builder
         .appName("Silver_To_Gold_DataMart")
-        .config("spark.driver.host", "127.0.0.1")
-        .config("spark.driver.bindAddress", "127.0.0.1")
+        .config("spark.driver.host", SPARK_LOCAL_IP)
+        .config("spark.driver.bindAddress", SPARK_LOCAL_IP)
         .config("spark.sql.extensions",
                 "org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions,"
                 "org.projectnessie.spark.extensions.NessieSparkSessionExtensions")
         .config("spark.sql.catalog.lakehouse", "org.apache.iceberg.spark.SparkCatalog")
         .config("spark.sql.catalog.lakehouse.catalog-impl", "org.apache.iceberg.nessie.NessieCatalog")
-        .config("spark.sql.catalog.lakehouse.uri", "http://localhost:19120/api/v1")
+        .config("spark.sql.catalog.lakehouse.uri", NESSIE_API_URL)
         .config("spark.sql.catalog.lakehouse.warehouse", "s3a://university-lakehouse/iceberg-warehouse")
-        .config("spark.sql.catalog.lakehouse.s3.endpoint", "http://localhost:9000")
-        .config("spark.hadoop.fs.s3a.endpoint", "http://localhost:9000")
-        .config("spark.hadoop.fs.s3a.access.key", "minioadmin")
-        .config("spark.hadoop.fs.s3a.secret.key", "minioadmin")
+        .config("spark.sql.catalog.lakehouse.s3.endpoint", MINIO_ENDPOINT)
+        .config("spark.hadoop.fs.s3a.endpoint", MINIO_ENDPOINT)
+        .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
+        .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
         .config("spark.hadoop.fs.s3a.path.style.access", "true")
         .config("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
         .config("spark.hadoop.fs.s3a.aws.credentials.provider",
