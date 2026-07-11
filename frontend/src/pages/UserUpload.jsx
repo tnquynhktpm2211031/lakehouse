@@ -51,7 +51,12 @@ const UserUpload = () => {
 
       <main className="max-w-4xl mx-auto mt-10 p-6">
         <div className="bg-white rounded-2xl shadow-xl p-10 border border-gray-100">
-          <h2 className="text-xl font-bold text-gray-800 mb-2">Nạp Báo cáo Thường niên (Bronze Layer)</h2>
+         <h2 className="text-xl font-bold text-gray-800 mb-2">
+           Upload Dữ liệu vào Staging Zone
+        </h2>
+        <p className="text-sm text-gray-400 mt-2">
+            Định dạng hỗ trợ: PDF, DOCX, XLSX, JPG, PNG
+        </p>
           
           {/* 3. Input ẩn để chọn file */}
           <input 

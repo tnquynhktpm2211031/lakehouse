@@ -16,7 +16,10 @@ app.add_middleware(
 app.include_router(auth.router, tags=["Authentication"])
 app.include_router(upload.router, prefix="/api", tags=["Upload"])
 
+# Catalog Router
+from api.routes import catalog
+app.include_router(catalog.router, prefix="/api")
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to Lakehouse API!"}
-    

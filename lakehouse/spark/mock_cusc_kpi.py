@@ -16,7 +16,6 @@ from kafka import KafkaProducer
 KAFKA_BOOTSTRAP_SERVERS = ["localhost:9094"]
 KAFKA_TOPIC = "cusc_kpi_events"
 
-# Vài bản ghi mẫu để test đa dạng nhóm đơn vị / kết quả
 SAMPLE_RECORDS = [
     {
         "ma_chi_tieu": "QTCL-MT01",

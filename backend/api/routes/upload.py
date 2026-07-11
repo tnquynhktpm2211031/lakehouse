@@ -9,7 +9,13 @@ router = APIRouter()
 @router.post("/upload/")
 async def upload_file(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     try:
+       
+        # Mọi file người dùng nạp vào đều phải qua tầng Staging để kiểm định.
+        # object_name = f"staging/{file.filename}"
 
+        # # Đọc size của file để MinIO biết dung lượng
+        
+        
         file_ext = file.filename.split('.')[-1].lower()
         if file_ext in ['csv']:
             folder = "structured_data"
@@ -24,6 +30,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
         file_size = file.file.tell()
         file.file.seek(0)
 
+   
         minio_client.put_object(
             bucket_name=MINIO_BUCKET_NAME,
             object_name=object_name,
@@ -33,4 +40,4 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
 
         return {"message": f"Đã đẩy trực tiếp file {file.filename} vào trạm {object_name} của MinIO!"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Lỗi đẩy file lên MinIO: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lỗi đẩy file  {str(e)}")
