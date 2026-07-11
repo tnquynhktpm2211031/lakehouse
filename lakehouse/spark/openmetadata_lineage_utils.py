@@ -24,8 +24,7 @@ Biến môi trường cần thiết (đặt trước khi chạy pipeline):
 """
 
 import os
-
-
+import logging
 # pyrefly: ignore [missing-import]
 from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
     OpenMetadataConnection,
@@ -156,4 +155,4 @@ def push_lineage_safe(*args, **kwargs):
     try:
         push_lineage(*args, **kwargs)
     except Exception as e:
-        print(f"⚠️  Đẩy lineage thất bại (không ảnh hưởng dữ liệu đã ghi): {e}")
+        logging.warning(f"⚠️  Đẩy lineage thất bại (không ảnh hưởng dữ liệu đã ghi): {e}")

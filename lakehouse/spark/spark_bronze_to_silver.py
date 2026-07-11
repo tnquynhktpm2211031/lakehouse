@@ -98,7 +98,8 @@ def init_silver_table_if_needed(spark):
 
 def main():
     spark = get_spark_session()
-    bronze_parquet_path = "s3a://university-lakehouse/bronze/structured_data/data_extracted.parquet"
+    # Đọc TẤT CẢ các file parquet được sinh ra bởi ingest_bronze (các file có timestamp)
+    bronze_parquet_path = "s3a://university-lakehouse/bronze/data_extracted_*.parquet"
 
     branch_name = make_branch_name("ingest_bronze_silver")
 
@@ -110,7 +111,12 @@ def main():
         # 2. Đảm bảo bảng tồn tại rồi MERGE dữ liệu -> mọi thay đổi chỉ nằm trên branch
         init_silver_table_if_needed(spark)
 
-        df_bronze = spark.read.parquet(bronze_parquet_path)
+        try:
+            df_bronze = spark.read.parquet(bronze_parquet_path)
+        except Exception as e:
+            print(f"⚠️  Không tìm thấy dữ liệu Parquet tại {bronze_parquet_path}. Có thể chưa có file nào được ingest.")
+            return
+
         df_staging = df_bronze.withColumn("thoi_gian_ingest_silver", current_timestamp())
         df_staging.createOrReplaceTempView("bronze_staging_view")
 

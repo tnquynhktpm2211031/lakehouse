@@ -89,10 +89,13 @@ def main():
         create_branch(spark, branch_name, from_ref="main")
         use_branch(spark, branch_name)
 
-        # Bước 1: Đọc kho dữ liệu sạch Rich Schema từ tầng Silver (đọc từ main,
-        # vì Silver đã được merge ổn định ở pipeline trước)
+        # Bước 1: Đọc kho dữ liệu sạch Rich Schema từ tầng Silver
         print("📥 Đang đọc dữ liệu sạch từ lakehouse.silver.kpi_cusc_master...")
-        df_silver = spark.read.table("lakehouse.silver.kpi_cusc_master")
+        try:
+            df_silver = spark.read.table("lakehouse.silver.kpi_cusc_master")
+        except Exception as e:
+            print("⚠️  Không tìm thấy bảng Silver (lakehouse.silver.kpi_cusc_master). Có thể chưa có dữ liệu ở tầng Silver.")
+            return
 
         # ---------------------------------------------------------
         # DATA MART 1: TỔNG HỢP KPI THEO PHÒNG BAN

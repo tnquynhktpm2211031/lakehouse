@@ -1,8 +1,12 @@
-  import React from 'react';
+  import React, { useState } from 'react';
   import { useNavigate } from 'react-router-dom';
+  import CatalogHistoryTimeline from './CatalogHistoryTimeline';
 
   const AdminDashboard = () => {
     const navigate = useNavigate();
+    const [activeTab, setActiveTab] = useState('dashboard');
+    
+    const supersetUrl = import.meta.env.VITE_SUPERSET_DASHBOARD_URL || "http://localhost:8088/superset/dashboard/1/?native_filters_key=8TNRVjTeKm37iM9LWUB6EX-Z6hUKzsb-3BK6RuTaYCHmOLIwd75IMSdjyh913EeT&standalone=3";
 
     const handleLogout = () => {
       localStorage.removeItem('token');
@@ -24,10 +28,14 @@
             <div className="text-xs text-slate-400 uppercase font-semibold mb-2">Quản trị hệ thống</div>
 
             {/* Chuyển <a> thành <button> hoặc <div> để hết cảnh báo */}
-            <button className="w-full text-left py-3 px-4 rounded bg-blue-600 shadow hover:bg-blue-700 transition">
+            <button 
+              onClick={() => setActiveTab('dashboard')}
+              className={`w-full text-left py-3 px-4 rounded transition ${activeTab === 'dashboard' ? 'bg-blue-600 shadow hover:bg-blue-700' : 'hover:bg-slate-800'}`}>
               📊 Báo cáo Tổng hợp (Gold)
             </button>
-            <button className="w-full text-left py-3 px-4 rounded hover:bg-slate-800 transition">
+            <button 
+              onClick={() => setActiveTab('pipeline')}
+              className={`w-full text-left py-3 px-4 rounded transition ${activeTab === 'pipeline' ? 'bg-blue-600 shadow hover:bg-blue-700' : 'hover:bg-slate-800'}`}>
               ⚙️ Trạng thái Pipeline
             </button>
             <button className="w-full text-left py-3 px-4 rounded hover:bg-slate-800 transition">
@@ -62,17 +70,21 @@
           <main className="flex-1 overflow-hidden p-6 bg-gray-50">
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 h-full overflow-hidden flex flex-col">
               <div className="p-4 border-b bg-gray-50 flex justify-between items-center">
-                <h3 className="font-medium text-gray-700">Báo cáo Thường niên chất lượng Giáo dục</h3>
+                <h3 className="font-medium text-gray-700">
+                  {activeTab === 'dashboard' ? 'Báo cáo Thường niên chất lượng Giáo dục' : 'Lịch sử Pipeline (Nessie)'}
+                </h3>
                 <button className="text-sm text-blue-600 hover:underline">Mở toàn màn hình</button>
               </div>
-              {/* NHÚNG SUPERSET VÀO ĐÂY */}
-              <div className="flex-1 bg-gray-100 flex items-center justify-center">
-              
-              <iframe
-                src="http://localhost:8088/superset/dashboard/1/?native_filters_key=8TNRVjTeKm37iM9LWUB6EX-Z6hUKzsb-3BK6RuTaYCHmOLIwd75IMSdjyh913EeT&standalone=3"
-                title="Superset Dashboard"
-                className="w-full h-full border-0"
-              />
+              <div className="flex-1 bg-gray-100 flex items-center justify-center overflow-hidden">
+                {activeTab === 'dashboard' ? (
+                  <iframe
+                    src={supersetUrl}
+                    title="Superset Dashboard"
+                    className="w-full h-full border-0"
+                  />
+                ) : (
+                  <CatalogHistoryTimeline />
+                )}
               </div>
             </div>
           </main>

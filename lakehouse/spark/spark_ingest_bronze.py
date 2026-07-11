@@ -14,6 +14,7 @@ import sys
 import hashlib
 import re
 import boto3
+from datetime import datetime
 import pandas as pd
 import pdfplumber
 import docx
@@ -21,8 +22,8 @@ import docx
 from env_config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET_NAME
 
 BUCKET_NAME   = MINIO_BUCKET_NAME
-SOURCE_PREFIX = "bronze/unstructured_data/"
-OUTPUT_KEY    = "bronze/structured_data/data_extracted.parquet"
+SOURCE_PREFIX = "staging/"
+ARCHIVE_PREFIX = "archive/"
 
 KETQUA_KHONG_DAT = "KHÔNG ĐẠT"
 KETQUA_DAT = "ĐẠT"
@@ -91,6 +92,8 @@ def main():
     response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=SOURCE_PREFIX)
     if "Contents" not in response: sys.exit(0)
 
+    processed_keys = []
+
     for obj in response["Contents"]:
         file_key = obj["Key"]
         if file_key.endswith('/'): continue
@@ -113,12 +116,36 @@ def main():
                 "ket_qua_he_thong": kq,
                 "checksum_sha256": checksum
             })
+        
+        processed_keys.append(file_key)
 
     if extracted_data:
+        # 1. Tạo tên file động theo thời gian
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_key = f"bronze/data_extracted_{timestamp}.parquet"
+
+        # 2. Ghi ra Parquet
         df = pd.DataFrame(extracted_data)
         parquet_buffer = io.BytesIO()
         df.to_parquet(parquet_buffer, index=False, engine="pyarrow")
-        s3_client.put_object(Bucket=BUCKET_NAME, Key=OUTPUT_KEY, Body=parquet_buffer.getvalue())
-        print("🌟 HOÀN THÀNH BRONZE OMNI-PARSER RICH SCHEMA!")
+        s3_client.put_object(Bucket=BUCKET_NAME, Key=output_key, Body=parquet_buffer.getvalue())
+        print(f"🌟 Đã tạo Parquet: {output_key}")
+    else:
+        print("Không có dữ liệu hợp lệ nào được trích xuất để ghi Parquet.")
+
+    if processed_keys:
+        # 3. Archive các file đã xử lý (kể cả file không parse được) để tránh kẹt lại staging
+        for key in processed_keys:
+            archive_key = key.replace(SOURCE_PREFIX, ARCHIVE_PREFIX, 1)
+            s3_client.copy_object(
+                Bucket=BUCKET_NAME,
+                CopySource={'Bucket': BUCKET_NAME, 'Key': key},
+                Key=archive_key
+            )
+            s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
+
+        print(f"🌟 HOÀN THÀNH INGEST! Đã dọn dẹp {len(processed_keys)} files khỏi staging.")
+    else:
+        print("Không có file nào mới để xử lý.")
 
 if __name__ == "__main__": main()
