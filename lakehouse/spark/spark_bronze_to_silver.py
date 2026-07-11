@@ -114,7 +114,7 @@ def main():
         try:
             df_bronze = spark.read.parquet(bronze_parquet_path)
         except Exception as e:
-            print(f"⚠️  Không tìm thấy dữ liệu Parquet tại {bronze_parquet_path}. Có thể chưa có file nào được ingest.")
+            print(f"Không tìm thấy dữ liệu Parquet tại {bronze_parquet_path}. Có thể chưa có file nào được ingest.")
             return
 
         df_staging = df_bronze.withColumn("thoi_gian_ingest_silver", current_timestamp())

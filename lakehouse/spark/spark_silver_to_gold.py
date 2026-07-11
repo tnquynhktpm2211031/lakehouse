@@ -90,11 +90,11 @@ def main():
         use_branch(spark, branch_name)
 
         # Bước 1: Đọc kho dữ liệu sạch Rich Schema từ tầng Silver
-        print("📥 Đang đọc dữ liệu sạch từ lakehouse.silver.kpi_cusc_master...")
+        print("Đang đọc dữ liệu sạch từ lakehouse.silver.kpi_cusc_master...")
         try:
             df_silver = spark.read.table("lakehouse.silver.kpi_cusc_master")
         except Exception as e:
-            print("⚠️  Không tìm thấy bảng Silver (lakehouse.silver.kpi_cusc_master). Có thể chưa có dữ liệu ở tầng Silver.")
+            print("Không tìm thấy bảng Silver (lakehouse.silver.kpi_cusc_master). Có thể chưa có dữ liệu ở tầng Silver.")
             return
 
         # ---------------------------------------------------------
@@ -114,7 +114,7 @@ def main():
             round((col("so_chi_tieu_dat") / col("tong_chi_tieu_danh_gia")) * 100, 2)
         ).withColumn("thoi_gian_dong_goi_gold", current_timestamp())
 
-        print("\n📊 1. PREVIEW DATA MART TỔNG HỢP PHÒNG BAN:")
+        print("\n1. PREVIEW DATA MART TỔNG HỢP PHÒNG BAN:")
         df_summary.orderBy(col("ty_le_hoan_thanh_phan_tram").desc()).show(truncate=False)
 
         # ---------------------------------------------------------
