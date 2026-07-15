@@ -6,6 +6,9 @@ from db.minio_client import minio_client
 from core.config import MINIO_BUCKET_NAME
 
 router = APIRouter()
+@router.get("/")
+def read_root():
+    return {"message": "Welcome to the Lakehouse API!"}
 
 @router.post("/upload")
 @router.post("/upload/")
@@ -28,16 +31,18 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
         )
 
         # Trigger Airflow Pipeline
-        airflow_url = "http://airflow-webserver:8080/api/v1/dags/lakehouse_pipeline/dagRuns"
+        from core.config import AIRFLOW_WEBSERVER_URL
+
+        airflow_url = f"{AIRFLOW_WEBSERVER_URL}/api/v1/dags/lakehouse_pipeline/dagRuns"
         try:
             # Assuming airflow-init sets up admin user with 'airflow:airflow'
             resp = requests.post(airflow_url, json={}, auth=("airflow", "airflow"), timeout=5)
             if resp.status_code in [200, 201]:
                 logging.info("Airflow pipeline triggered successfully.")
             else:
-                logging.warning(f"Failed to trigger Airflow pipeline: {resp.text}")
+                logging.warning(f"Failed to trigger Airflow pipeline [{resp.status_code}]: {resp.text}")
         except Exception as e:
-            logging.error(f"Error triggering Airflow pipeline: {e}")
+            logging.error(f"Error triggering Airflow pipeline at {airflow_url}: {e}")
 
         return {"message": f"Đã đẩy trực tiếp file {file.filename} vào trạm {object_name} của MinIO và kích hoạt pipeline!"}
     except Exception as e:

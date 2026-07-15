@@ -125,10 +125,13 @@ def main():
             "ma_chi_tieu",
             "nhom_don_vi",
             "quy_danh_gia",
+            "noi_dung_muc_tieu",
             "dinh_ky_thu_thap",
             "muc_dang_ky",
             "muc_dat",
             "ket_qua_he_thong",
+            "nguyen_nhan",
+            "hanh_dong_khac_phuc",
             "file_nguon"
         ).withColumn("thoi_gian_dong_goi_gold", current_timestamp())
 
@@ -136,10 +139,10 @@ def main():
         # GHI DỮ LIỆU LÊN BRANCH TẠM (chưa ảnh hưởng main)
         # ---------------------------------------------------------
         print(f"🧊 Đang ghi Data Mart Tổng hợp lên branch '{branch_name}'...")
-        df_summary.write.format("iceberg").mode("overwrite").saveAsTable(GOLD_SUMMARY_TABLE)
+        df_summary.writeTo(GOLD_SUMMARY_TABLE).createOrReplace()
 
         print(f"🧊 Đang ghi Data Mart Chi tiết lên branch '{branch_name}'...")
-        df_detail.write.format("iceberg").mode("overwrite").saveAsTable(GOLD_DETAIL_TABLE)
+        df_detail.writeTo(GOLD_DETAIL_TABLE).createOrReplace()
 
         # 2. Data quality check TRÊN BRANCH trước khi merge
         check_quality_gold(spark, GOLD_SUMMARY_TABLE, GOLD_DETAIL_TABLE)

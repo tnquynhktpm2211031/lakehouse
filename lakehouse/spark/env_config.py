@@ -41,7 +41,11 @@ PG_MAINTENANCE_DB = os.environ.get("PG_MAINTENANCE_DB", "postgres")
 NESSIE_DB         = os.environ.get("NESSIE_DB",         "nessie_db")
 
 # ── Nessie ───────────────────────────────────────────────────
-NESSIE_API_URL    = os.environ.get("NESSIE_API_URL",    "http://localhost:19120/api/v1")
+_DEFAULT_NESSIE_URL = "http://localhost:19120/api/v1"
+if os.environ.get("NESSIE_API_URL"):
+    NESSIE_API_URL = os.environ.get("NESSIE_API_URL")
+else:
+    NESSIE_API_URL = "http://nessie:19120/api/v1" if os.path.exists("/.dockerenv") else _DEFAULT_NESSIE_URL
 
 # ── OpenMetadata ─────────────────────────────────────────────
 OPENMETADATA_HOST_PORT  = os.environ.get("OPENMETADATA_HOST_PORT",  "http://localhost:8585/api")

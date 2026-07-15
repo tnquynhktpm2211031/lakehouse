@@ -3,6 +3,8 @@ FEATURE_FLAGS = {
     "EMBEDDED_SUPERSET": True
 }
 
+
+PERMANENT_SESSION_LIFETIME = 28800  # 8 hours in seconds nó ở đây là thời gian sống của session, sau thời gian này người dùng sẽ phải đăng nhập lại 
 # Tắt chặn iFrame (X-Frame-Options)
 TALISMAN_ENABLED = False
 

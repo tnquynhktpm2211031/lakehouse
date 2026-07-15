@@ -146,7 +146,10 @@ services:
 
   # Airflow Init
   airflow-init:
-    image: apache/airflow:2.9.2-python3.10
+    build:
+      context: .
+      dockerfile: airflow.Dockerfile
+    image: custom-airflow:2.9.2
     container_name: demo-airflow-init
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:240203@postgres:5432/airflow_db
@@ -161,7 +164,7 @@ services:
 
   # Airflow Webserver
   airflow-webserver:
-    image: apache/airflow:2.9.2-python3.10
+    image: custom-airflow:2.9.2
     container_name: demo-airflow-webserver
     ports:
       - "8080:8080"
@@ -169,10 +172,13 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:240203@postgres:5432/airflow_db
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      _PIP_ADDITIONAL_REQUIREMENTS: 'pyspark==3.5.0 minio python-docx pdfplumber boto3 psycopg2-binary'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      MINIO_ENDPOINT: 'http://minio:9000'
+      NESSIE_API_URL: 'http://nessie:19120/api/v1'
     volumes:
       - ./lakehouse/dags:/opt/airflow/dags
       - ./lakehouse/spark:/opt/airflow/spark
+    command: webserver
     depends_on:
       - postgres
       - airflow-init
@@ -181,16 +187,19 @@ services:
 
   # Airflow Scheduler
   airflow-scheduler:
-    image: apache/airflow:2.9.2-python3.10
+    image: custom-airflow:2.9.2
     container_name: demo-airflow-scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:240203@postgres:5432/airflow_db
       AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
-      _PIP_ADDITIONAL_REQUIREMENTS: 'pyspark==3.5.0 minio python-docx pdfplumber boto3 psycopg2-binary'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      MINIO_ENDPOINT: 'http://minio:9000'
+      NESSIE_API_URL: 'http://nessie:19120/api/v1'
     volumes:
       - ./lakehouse/dags:/opt/airflow/dags
       - ./lakehouse/spark:/opt/airflow/spark
+    command: scheduler
     depends_on:
       - postgres
       - airflow-init

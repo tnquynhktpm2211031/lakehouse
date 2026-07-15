@@ -20,7 +20,7 @@ const UserUpload = () => {
     const formData = new FormData();
     formData.append("file", file);
 
-    try {
+    try { 
       setUploadStatus(`Đang tải ${file.name} lên Lakehouse...`);
       const res = await axios.post("http://localhost:8000/api/upload/", formData, {
         headers: { 
