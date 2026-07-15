@@ -6,6 +6,7 @@ import {
   Routes,
 } from "react-router-dom";
 import AdminDashboard from "./pages/AdminDashboard";
+import CatalogHistoryTimeline from "./pages/CatalogHistoryTimeline";
 import Login from "./pages/auth/Login";
 import UserUpload from "./pages/UserUpload";
 
@@ -39,6 +40,11 @@ function App() {
               <Navigate to="/login" />
             )
           }
+        />
+
+        <Route
+          path="/catalog"
+          element={token ? <CatalogHistoryTimeline /> : <Navigate to="/login" />}
         />
 
         <Route path="*" element={<Navigate to="/" />} />

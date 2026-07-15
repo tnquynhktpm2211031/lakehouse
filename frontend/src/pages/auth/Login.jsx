@@ -102,7 +102,7 @@ const Login = ({ setToken, setRole }) => {
             <span className="px-3 py-1 bg-blue-700 text-xs font-semibold rounded-full text-blue-100">ReactJS</span>
             <span className="px-3 py-1 bg-blue-700 text-xs font-semibold rounded-full text-blue-100">TailwindCSS</span>
           </div>
-        </div>
+        </div>cl
       </div>
     </div>
   );

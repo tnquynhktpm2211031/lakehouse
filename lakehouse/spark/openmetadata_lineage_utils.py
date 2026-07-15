@@ -24,25 +24,46 @@ Biến môi trường cần thiết (đặt trước khi chạy pipeline):
 """
 
 import os
+import logging
 
+OPENMETADATA_AVAILABLE = False
+_OPENMETADATA_IMPORT_ERROR = None
 
-# pyrefly: ignore [missing-import]
-from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
-    OpenMetadataConnection,
-)
-from metadata.generated.schema.security.client.openMetadataJWTClientConfig import (
-    OpenMetadataJWTClientConfig,
-)
-from metadata.ingestion.ometa.ometa_api import OpenMetadata
+try:
+    # pyrefly: ignore [missing-import]
+    from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
+        OpenMetadataConnection,
+    )
+    from metadata.generated.schema.security.client.openMetadataJWTClientConfig import (
+        OpenMetadataJWTClientConfig,
+    )
+    from metadata.ingestion.ometa.ometa_api import OpenMetadata
 
-from metadata.generated.schema.entity.data.database import Database
-from metadata.generated.schema.entity.data.databaseSchema import DatabaseSchema
-from metadata.generated.schema.entity.data.table import Table, Column, DataType
-from metadata.generated.schema.api.data.createDatabaseSchema import CreateDatabaseSchemaRequest
-from metadata.generated.schema.api.data.createTable import CreateTableRequest
-from metadata.generated.schema.api.lineage.addLineage import AddLineageRequest
-from metadata.generated.schema.type.entityLineage import EntitiesEdge, LineageDetails
-from metadata.generated.schema.type.entityReference import EntityReference
+    from metadata.generated.schema.entity.data.database import Database
+    from metadata.generated.schema.entity.data.databaseSchema import DatabaseSchema
+    from metadata.generated.schema.entity.data.table import Table, Column, DataType
+    from metadata.generated.schema.api.data.createDatabaseSchema import CreateDatabaseSchemaRequest
+    from metadata.generated.schema.api.data.createTable import CreateTableRequest
+    from metadata.generated.schema.api.lineage.addLineage import AddLineageRequest
+    from metadata.generated.schema.type.entityLineage import EntitiesEdge, LineageDetails
+    from metadata.generated.schema.type.entityReference import EntityReference
+    OPENMETADATA_AVAILABLE = True
+except ModuleNotFoundError as exc:
+    OpenMetadataConnection = None
+    OpenMetadataJWTClientConfig = None
+    OpenMetadata = None
+    Database = None
+    DatabaseSchema = None
+    Table = None
+    Column = None
+    DataType = None
+    CreateDatabaseSchemaRequest = None
+    CreateTableRequest = None
+    AddLineageRequest = None
+    EntitiesEdge = None
+    LineageDetails = None
+    EntityReference = None
+    _OPENMETADATA_IMPORT_ERROR = exc
 
 from env_config import OPENMETADATA_HOST_PORT, OPENMETADATA_JWT_TOKEN
 
@@ -54,7 +75,13 @@ BRONZE_TABLE_NAME = "data_extracted_parquet"
 
 
 def get_client():
-    """Tạo client kết nối tới OpenMetadata. Raise lỗi rõ ràng nếu thiếu token."""
+    """Tạo client kết nối tới OpenMetadata. Raise lỗi rõ ràng nếu thiếu token hoặc package."""
+    if not OPENMETADATA_AVAILABLE:
+        raise RuntimeError(
+            "OpenMetadata client chưa sẵn sàng: "
+            f"{_OPENMETADATA_IMPORT_ERROR}. "
+            "Cài đặt package openmetadata-ingestion để bật lineage, hoặc bỏ qua bước này."
+        )
     if not OPENMETADATA_JWT_TOKEN:
         raise RuntimeError(
             "Thiếu biến môi trường OPENMETADATA_JWT_TOKEN. "
@@ -156,4 +183,4 @@ def push_lineage_safe(*args, **kwargs):
     try:
         push_lineage(*args, **kwargs)
     except Exception as e:
-        print(f"⚠️  Đẩy lineage thất bại (không ảnh hưởng dữ liệu đã ghi): {e}")
+        logging.warning(f"⚠️  Đẩy lineage thất bại (không ảnh hưởng dữ liệu đã ghi): {e}")
