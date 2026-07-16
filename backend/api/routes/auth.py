@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from core.security import verify_password, create_access_token
 from db.database import get_user
 
+
 router = APIRouter()
 
 @router.post("/login")
