@@ -22,8 +22,11 @@ app.include_router(catalog.router, prefix="/api")
 
 # Pipeline Data Explorer Router (Bronze/Silver/Gold preview - giống Airflow Graph View)
 from api.routes import pipeline_preview
-# app.include_router(pipeline_preview.router, prefix="/api/pipeline", tags=["Pipeline"])
 app.include_router(pipeline_preview.router, prefix="/pipeline", tags=["Pipeline"])
+# Ingest tracking + notifications
+from api.routes import ingest
+app.include_router(ingest.router, prefix="/ingest", tags=["Ingest"])
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to Lakehouse API!"}

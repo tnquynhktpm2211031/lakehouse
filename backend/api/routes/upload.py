@@ -1,17 +1,23 @@
 import logging
 import requests
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+import uuid
+import json
+from datetime import datetime
+from pathlib import Path
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException, Response
 from api.dependencies import get_current_user
 from db.minio_client import minio_client
 from core.config import MINIO_BUCKET_NAME
+from api.notifications import notify_event
+from api.routes.ingest import trigger_pipeline_for_file
 
 router = APIRouter()
 @router.get("/")
 def read_root():
     return {"message": "Welcome to the Lakehouse API!"}
 
-@router.post("/upload")
-@router.post("/upload/")
+@router.post("/upload", status_code=201)
+@router.post("/upload/", status_code=201)
 async def upload_file(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     try:
        
@@ -30,20 +36,39 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
             length=file_size
         )
 
-        # Trigger Airflow Pipeline
-        from core.config import AIRFLOW_WEBSERVER_URL
+        # Record ingestion metadata (simple JSONL store)
+        data_dir = Path(__file__).resolve().parents[2] / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        log_file = data_dir / "ingestion_logs.jsonl"
 
-        airflow_url = f"{AIRFLOW_WEBSERVER_URL}/api/v1/dags/lakehouse_pipeline/dagRuns"
+        file_id = str(uuid.uuid4())
+        meta = {
+            "id": file_id,
+            "file_name": file.filename,
+            "sender": current_user.get("username") if current_user else None,
+            "source_system": None,
+            "receive_time": datetime.utcnow().isoformat() + "Z",
+            "bucket": MINIO_BUCKET_NAME,
+            "object_key": object_name,
+            "pipeline_stage": "Staging",
+            "status": "RECEIVED",
+            "http_status": 201,
+        }
+
+        with open(log_file, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(meta, ensure_ascii=False) + "\n")
+
+        # broadcast notification to any connected websocket clients
         try:
-            # Assuming airflow-init sets up admin user with 'airflow:airflow'
-            resp = requests.post(airflow_url, json={}, auth=("airflow", "airflow"), timeout=5)
-            if resp.status_code in [200, 201]:
-                logging.info("Airflow pipeline triggered successfully.")
-            else:
-                logging.warning(f"Failed to trigger Airflow pipeline [{resp.status_code}]: {resp.text}")
-        except Exception as e:
-            logging.error(f"Error triggering Airflow pipeline at {airflow_url}: {e}")
+            notify_event({"event": "NEW_FILE_RECEIVED", "data": meta})
+        except Exception:
+            logging.exception("Failed to notify websocket clients")
+        # Trigger Airflow Pipeline via ingest helper (will update ingestion log)
+        try:
+            trigger_pipeline_for_file(file_id)
+        except Exception:
+            logging.exception("Failed to trigger pipeline for file_id %s", file_id)
 
-        return {"message": f"Đã đẩy trực tiếp file {file.filename} vào trạm {object_name} của MinIO và kích hoạt pipeline!"}
+        return {"code":201, "message": "File received successfully", "fileId": file_id}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Lỗi đẩy file  {str(e)}")

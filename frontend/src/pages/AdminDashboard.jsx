@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import CatalogHistoryTimeline from './CatalogHistoryTimeline';
 import PipelineDataExplorer from './Pipelinedataexplorer';
+import IngestionMonitor from '../components/IngestionMonitor';
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -78,7 +79,10 @@ const AdminDashboard = () => {
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-20 bg-white shadow-sm flex items-center justify-between px-8 z-10">
           <h2 className="text-xl font-semibold text-gray-800">Dashboard Khai thác Dữ liệu</h2>
-          <div className="text-sm text-gray-500">Kết nối trực tiếp: <span className="text-green-600 font-bold">Apache Superset & Trino</span></div>
+          <div className="flex items-center">
+            <div className="text-sm text-gray-500 mr-4">Kết nối trực tiếp: <span className="text-green-600 font-bold">Apache Superset & Trino</span></div>
+            <IngestionMonitor />
+          </div>
         </header>
 
         <main className="flex-1 overflow-hidden p-6 bg-gray-50">

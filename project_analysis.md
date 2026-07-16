@@ -208,10 +208,7 @@ main ─────────────────────────
    - → Cần thêm route `/catalog` hoặc tích hợp vào AdminDashboard
 
 
-7. **Backend chưa trigger pipeline** airflow 
-   - Sau khi upload file lên MinIO, không có cơ chế tự động kích hoạt pipeline Bronze → Silver → Gold
-   - → Cần webhook/scheduler hoặc API endpoint để trigger Spark job
-
+7. * 
 #### 🟢 Vấn đề nhỏ (Nice-to-have)
 
 8. **Superset Dashboard hardcode URL và filter key**
