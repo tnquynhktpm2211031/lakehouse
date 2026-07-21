@@ -54,3 +54,6 @@ OPENMETADATA_JWT_TOKEN  = os.environ.get("OPENMETADATA_JWT_TOKEN",  "")
 # ── Spark / Hadoop (Windows) ──────────────────────────────────
 HADOOP_HOME       = os.environ.get("HADOOP_HOME",       r"C:\hadoop")
 SPARK_LOCAL_IP    = os.environ.get("SPARK_LOCAL_IP",    "127.0.0.1")
+
+# ── Google Gemini API ─────────────────────────────────────────
+GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY",    "")
