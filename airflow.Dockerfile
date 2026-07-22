@@ -19,4 +19,5 @@ RUN pip install --no-cache-dir \
     python-docx \
     pdfplumber \
     boto3 \
-    psycopg2-binary
+    psycopg2-binary \
+    google-genai

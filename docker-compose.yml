@@ -151,6 +151,8 @@ services:
       dockerfile: airflow.Dockerfile
     image: custom-airflow:2.9.2
     container_name: demo-airflow-init
+    env_file:
+      - .env
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:240203@postgres:5432/airflow_db
       _AIRFLOW_DB_UPGRADE: 'true'
@@ -168,6 +170,8 @@ services:
     container_name: demo-airflow-webserver
     ports:
       - "8080:8080"
+    env_file:
+      - .env
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:240203@postgres:5432/airflow_db
@@ -182,6 +186,7 @@ services:
     volumes:
       - ./lakehouse/dags:/opt/airflow/dags
       - ./lakehouse/spark:/opt/airflow/spark
+      - ./.env:/opt/airflow/.env
     command: webserver
     depends_on:
       - postgres
@@ -193,6 +198,8 @@ services:
   airflow-scheduler:
     image: custom-airflow:2.9.2
     container_name: demo-airflow-scheduler
+    env_file:
+      - .env
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:240203@postgres:5432/airflow_db
@@ -203,6 +210,7 @@ services:
     volumes:
       - ./lakehouse/dags:/opt/airflow/dags
       - ./lakehouse/spark:/opt/airflow/spark
+      - ./.env:/opt/airflow/.env
     command: scheduler
     depends_on:
       - postgres

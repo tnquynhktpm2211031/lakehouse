@@ -17,8 +17,48 @@ qua Nessie (branch / merge / tag) trong các pipeline Spark.
 
 from datetime import datetime
 
+import requests
+from env_config import NESSIE_API_URL
+
 CATALOG_NAME = "lakehouse"  # trùng với spark.sql.catalog.lakehouse
 QUY_DANH_GIA_UNKNOWN = "UNKNOWN_KY"
+
+
+def delete_nessie_orphaned_key(table_name: str, branch_name: str = "main"):
+    """
+    Tự động xóa orphaned content key trong Nessie Catalog khi file metadata S3 bị mất/hỏng.
+    table_name ví dụ: "lakehouse.silver.kpi_cusc_master" -> key elements: ["silver", "kpi_cusc_master"]
+    """
+    try:
+        parts = table_name.split(".")
+        if len(parts) >= 2:
+            key_elements = parts[1:]
+        else:
+            key_elements = parts
+
+        url_tree = f"{NESSIE_API_URL}/trees/tree/{branch_name}"
+        res = requests.get(url_tree, timeout=5)
+        if res.status_code != 200:
+            return False
+        hash_val = res.json().get("hash")
+
+        commit_url = f"{NESSIE_API_URL}/trees/branch/{branch_name}/commit?expectedHash={hash_val}"
+        payload = {
+            "commitMeta": {"message": f"Auto-purge orphaned key {table_name}"},
+            "operations": [
+                {
+                    "type": "DELETE",
+                    "key": {"elements": key_elements}
+                }
+            ]
+        }
+        resp = requests.post(commit_url, json=payload, timeout=5)
+        if resp.status_code in [200, 204]:
+            print(f"🗑️ Đã tự động xóa orphaned key '{key_elements}' khỏi Nessie branch '{branch_name}'.")
+            return True
+    except Exception as e:
+        print(f"⚠️ Không thể xóa orphaned key qua Nessie API: {e}")
+    return False
 
 
 def make_branch_name(prefix: str) -> str:

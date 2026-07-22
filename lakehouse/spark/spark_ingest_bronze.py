@@ -1,26 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-spark_ingest_bronze.py (Bản đã vá lỗi + mở rộng theo yêu cầu 1-2-3-4)
+spark_ingest_bronze.py (Bản đã cập nhật sử dụng Gemini API cho quá trình Ingestion)
 ------------------------------------------------------------
-TẦNG BRONZE - OMNI-PARSER RICH SCHEMA
-
-CÁC THAY ĐỔI SO VỚI BẢN GỐC:
-  1. [FIX LỖI NGHIÊM TRỌNG] extract_ma_chi_tieu(): regex cũ chỉ nhận A-Z nên bỏ
-     sót các mã có dấu tiếng Việt như 'ĐTMT01' -> mất toàn bộ chỉ tiêu Phòng Đào
-     tạo một cách âm thầm. Đã đổi sang \\w Unicode để nhận đủ mọi mã.
-  2. [Yêu cầu 1] parse_percent_or_number(): tách thêm cột numeric riêng cho
-     muc_dang_ky / muc_dat, xử lý được cả số thập phân kiểu VN (dấu phẩy '3,5')
-     lẫn kiểu quốc tế (dấu chấm '9.5'). Cột text gốc vẫn giữ nguyên để audit.
-  3. [Yêu cầu 4] extract_quy_danh_gia_from_text(): trích kỳ đánh giá (Quý/Năm)
-     từ NỘI DUNG văn bản thay vì hardcode "Q1/2026". Không phụ thuộc tên file,
-     không giới hạn giá trị Quý/Năm cụ thể nào (nhận mọi Q1-Q4, mọi năm hợp lệ).
-     Nếu không đọc được -> gán 'UNKNOWN_KY', KHÔNG chặn ingest, để lộ ra ở bước
-     quality-gate của Silver (nessie_catalog_utils.check_quality_silver).
-  4. extract_all_ky_candidates(): cảnh báo (không chặn) nếu 1 file có vẻ chứa
-     lẫn nhiều kỳ khác nhau.
-  5. checksum_sha256 giờ tính luôn cả quy_danh_gia để khóa duy nhất bản ghi
-     phản ánh đúng khóa nghiệp vụ (ma_chi_tieu, quy_danh_gia).
-------------------------------------------------------------
+TẦNG BRONZE - AI-DRIVEN PARSING
+Sử dụng Gemini API để bóc tách thông tin từ PDF/DOCX sang Structured Data.
 """
 
 import io
@@ -29,13 +12,48 @@ import sys
 import hashlib
 import re
 import zipfile
+import xml.etree.ElementTree as ET
 import boto3
+import json
+import time
+import tempfile
 from datetime import datetime
 import pandas as pd
-import pdfplumber
-import docx
+from pydantic import BaseModel
 
-from env_config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_BUCKET_NAME
+from google import genai
+from google.genai import types
+
+from env_config import (
+    MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, 
+    MINIO_BUCKET_NAME, GEMINI_API_KEY
+)
+
+# Cấu hình Gemini Client
+if GEMINI_API_KEY:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+else:
+    client = None
+    print("WARNING: GEMINI_API_KEY is not set. The Gemini API calls will fail.")
+
+
+def retry_with_backoff(func, max_retries=3, initial_delay=15):
+    """
+    Retry function with exponential backoff for quota errors.
+    """
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e)
+            # Check for quota/rate limit errors
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                if attempt < max_retries - 1:
+                    wait_time = initial_delay * (2 ** attempt)
+                    print(f"⚠️ Quota exceeded. Retrying in {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(wait_time)
+                    continue
+            raise
 
 BUCKET_NAME    = MINIO_BUCKET_NAME
 SOURCE_PREFIX  = "staging/"
@@ -46,6 +64,17 @@ KETQUA_DAT           = "ĐẠT"
 KETQUA_CHUA_DEN_KY   = "CHƯA ĐẾN KỲ ĐÁNH GIÁ"
 QUY_DANH_GIA_UNKNOWN = "UNKNOWN_KY"
 
+# Khai báo cấu trúc Schema ép Gemini trả về
+class KpiRecord(BaseModel):
+    ma_chi_tieu: str
+    quy_danh_gia: str
+    noi_dung_muc_tieu: str
+    dinh_ky_thu_thap: str
+    muc_dang_ky: str
+    muc_dat: str
+    ket_qua_he_thong: str
+    nguyen_nhan: str
+    hanh_dong_khac_phuc: str
 
 def get_s3_client():
     return boto3.client(
@@ -69,27 +98,8 @@ def clean_status_text(text: str) -> str:
     return text.replace("\n", " ").strip()
 
 
-def extract_ma_chi_tieu(text: str):
-    """Trích mã chỉ tiêu, ví dụ 'HT-MT05', 'ĐTMT01' -> 'ĐT-MT01'.
-
-    [FIX] Dùng \\w với re.UNICODE (nhận mọi chữ cái Unicode, gồm Đ/Ă/Â/Ê/Ô/Ơ/Ư
-    có dấu) thay vì [A-Z] như bản gốc — bản gốc bỏ sót hoàn toàn các mã như
-    'ĐTMT01'..'ĐTMT13' (Phòng Đào tạo) vì chữ 'Đ' không thuộc A-Z.
-    """
-    text_clean = str(text).replace(" ", "").replace("\n", "").upper()
-    match = re.search(r"([^\W\d_]{2,5}-?MT\d{2,3})", text_clean, re.UNICODE)
-    if match:
-        ma_raw = match.group(1)
-        if "-" not in ma_raw:
-            ma_raw = ma_raw.replace("MT", "-MT")
-        return ma_raw
-    return None
-
-
 def parse_percent_or_number(text):
-    """'100%' -> 100.0 | '3,5' -> 3.5 (số thập phân kiểu VN) | '9.5' -> 9.5
-    | 'Chưa đến kỳ đánh giá' / 'ĐẠT' -> None (không phải giá trị số)."""
-    if text is None:
+    if text is None or text == "N/A" or not str(text).strip():
         return None
     cleaned = str(text).strip().replace("%", "").replace(",", ".")
     try:
@@ -98,110 +108,152 @@ def parse_percent_or_number(text):
         return None
 
 
-def extract_quy_danh_gia_from_text(full_text: str):
-    """Trích kỳ đánh giá từ NỘI DUNG văn bản (không phụ thuộc tên file).
-    Nhận MỌI Quý 1-4 và MỌI năm hợp lệ (không hardcode 1 giá trị cụ thể nào),
-    ví dụ: 'QUÝ 2/2022' -> 'Q2/2022', 'QUÝ 3/2014' -> 'Q3/2014'.
-    Chỉ cần pattern xuất hiện ở BẤT KỲ đâu trong toàn bộ file (gộp mọi trang),
-    không bắt buộc lặp lại ở từng trang.
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Trích xuất văn bản thô từ file DOCX mà không cần thư viện bên ngoài."""
+    text_runs = []
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+        try:
+            xml_content = z.read("word/document.xml")
+        except KeyError:
+            return ""
+
+    root = ET.fromstring(xml_content)
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    for paragraph in root.findall(".//w:p", namespace):
+        texts = [node.text for node in paragraph.findall(".//w:t", namespace) if node.text]
+        if texts:
+            text_runs.append("".join(texts))
+
+    return "\n".join(text_runs)
+
+
+def parse_with_gemini(file_bytes: bytes, ext: str, file_key: str):
     """
-    text_upper = str(full_text).upper()
+    Sử dụng Gemini File API để phân tích file PDF hoặc văn bản đã trích xuất từ DOCX.
+    Trả về (rows, quy_danh_gia, ky_candidates)
+    """
+    if not client:
+        raise ValueError("GEMINI_API_KEY chưa được cấu hình!")
 
-    m = re.search(r"QUÝ\s*(\d)\s*/\s*(\d{4})", text_upper)
-    if m:
-        quy, nam = int(m.group(1)), int(m.group(2))
-        if 1 <= quy <= 4 and 2000 <= nam <= 2100:
-            return f"Q{quy}/{nam}"
+    if ext == ".docx":
+        file_text = extract_text_from_docx(file_bytes)
+        if not file_text.strip():
+            raise ValueError("Không thể trích xuất văn bản từ file DOCX.")
 
-    m2 = re.search(r"\bQ(\d)\s*QUÝ\b", text_upper)
-    year_m = re.search(r"NĂM\s*(\d{4})", text_upper)
-    if m2 and year_m:
-        quy, nam = int(m2.group(1)), int(year_m.group(1))
-        if 1 <= quy <= 4 and 2000 <= nam <= 2100:
-            return f"Q{quy}/{nam}"
+        prompt = (
+            "Bạn là một chuyên gia phân tích dữ liệu KPI giáo dục. "
+            "Hãy đọc văn bản dưới đây và trích xuất tất cả các dòng chỉ tiêu KPI trong bảng. "
+            "Trả về một mảng JSON các đối tượng có các trường (keys) đúng theo cấu trúc được yêu cầu. "
+            "Lưu ý: "
+            "1. ma_chi_tieu phải là định dạng chữ HOA và có dấu gạch ngang (VD: ĐT-MT01, HT-MT05). "
+            "2. quy_danh_gia phải có dạng Q[1-4]/[Năm], ví dụ Q1/2026. Nếu không tìm thấy, để trống hoặc 'N/A'. "
+            "3. Nếu không có giá trị ở ô nào, trả về 'N/A' hoặc chuỗi rỗng. "
+            "4. Đảm bảo trích xuất đầy đủ tất cả các trang, không bỏ sót dòng nào."
+            "\n\nVĂN BẢN:\n" + file_text
+        )
 
-    return None
+        def make_api_call():
+            return client.models.generate_content(
+                model="models/gemini-flash-lite-latest",
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=list[KpiRecord],
+                    temperature=0.0,
+                )
+            )
 
+        response = retry_with_backoff(make_api_call, max_retries=3, initial_delay=15)
+    else:
+        tmp_path = ""
+        uploaded_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
 
-def extract_all_ky_candidates(full_text: str) -> set:
-    """Tìm TẤT CẢ các kỳ khác nhau xuất hiện trong file, để cảnh báo (KHÔNG
-    chặn ingest) nếu 1 file có vẻ chứa lẫn nhiều kỳ đánh giá khác nhau."""
-    text_upper = str(full_text).upper()
-    found = set()
-    for match in re.finditer(r"QUÝ\s*(\d)\s*/\s*(\d{4})", text_upper):
-        quy, nam = int(match.group(1)), int(match.group(2))
-        if 1 <= quy <= 4 and 2000 <= nam <= 2100:
-            found.add(f"Q{quy}/{nam}")
-    return found
+            print(f"Uploading {file_key} to Gemini API...")
+            uploaded_file = client.files.upload(file=tmp_path)
 
+            while uploaded_file.state.name == "PROCESSING":
+                print(f"File {file_key} is processing, waiting 2 seconds...")
+                time.sleep(2)
+                uploaded_file = client.files.get(name=uploaded_file.name)
 
-def get_full_text_pdf(pdf) -> str:
-    return "\n".join(page.extract_text() or "" for page in pdf.pages)
+            if uploaded_file.state.name == "FAILED":
+                raise ValueError(f"Gemini API failed to process file {file_key}")
 
+            print(f"File {file_key} is ready. Requesting extraction...")
+            prompt = (
+                "Bạn là một chuyên gia phân tích dữ liệu KPI giáo dục. "
+                "Hãy đọc tài liệu đính kèm và trích xuất tất cả các dòng chỉ tiêu KPI trong bảng. "
+                "Trả về một mảng JSON các đối tượng có các trường (keys) đúng theo cấu trúc được yêu cầu. "
+                "Lưu ý: "
+                "1. ma_chi_tieu phải là định dạng chữ HOA và có dấu gạch ngang (VD: ĐT-MT01, HT-MT05). "
+                "2. quy_danh_gia phải có dạng Q[1-4]/[Năm], ví dụ Q1/2026. Nếu không tìm thấy, để trống hoặc 'N/A'. "
+                "3. Nếu không có giá trị ở ô nào, trả về 'N/A' hoặc chuỗi rỗng. "
+                "4. Đảm bảo trích xuất đầy đủ tất cả các trang, không bỏ sót dòng nào."
+            )
 
-def get_full_text_docx(doc) -> str:
-    parts = [p.text for p in doc.paragraphs]
-    for table in doc.tables:
-        for row in table.rows:
-            parts.extend(cell.text for cell in row.cells)
-    return "\n".join(parts)
+            def make_api_call():
+                return client.models.generate_content(
+                    model="models/gemini-flash-lite-latest",
+                    contents=[uploaded_file, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=list[KpiRecord],
+                        temperature=0.0,
+                    )
+                )
 
+            response = retry_with_backoff(make_api_call, max_retries=3, initial_delay=15)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
-def parse_pdf(file_bytes: bytes):
-    """Trả về (rows, quy_danh_gia, ky_candidates)."""
-    rows = []
-    with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
-        full_text = get_full_text_pdf(pdf)
-        quy_danh_gia = extract_quy_danh_gia_from_text(full_text)
-        ky_candidates = extract_all_ky_candidates(full_text)
+            if uploaded_file:
+                try:
+                    client.files.delete(name=uploaded_file.name)
+                    print(f"Deleted file from Gemini: {uploaded_file.name}")
+                except Exception as e:
+                    print(f"Failed to delete Gemini file: {e}")
 
-        for page in pdf.pages:
-            table = page.extract_table()
-            if table:
-                for r in table:
-                    if not r or len(r) < 8:
-                        continue
-                    ma = extract_ma_chi_tieu(r[0])
-                    if ma:
-                        noi_dung = str(r[1]).strip().replace("\n", " ") if r[1] else "N/A"
-                        dinh_ky = str(r[2]).strip().replace("\n", " ") if r[2] else "N/A"
-                        muc_dang_ky = str(r[3]).strip().replace("\n", " ") if r[3] else "N/A"
-                        muc_dat = str(r[4]).strip().replace("\n", " ") if r[4] else "N/A"
-                        ket_qua = clean_status_text(r[5])
-                        nguyen_nhan = str(r[6]).strip().replace("\n", " ") if r[6] else ""
-                        hanh_dong = str(r[7]).strip().replace("\n", " ") if r[7] else ""
-                        rows.append((ma, noi_dung, dinh_ky, muc_dang_ky, muc_dat, ket_qua, nguyen_nhan, hanh_dong))
-    return rows, quy_danh_gia, ky_candidates
+    raw_json = response.text
+    data = json.loads(raw_json)
 
-
-def parse_docx(file_bytes: bytes):
-    """Trả về (rows, quy_danh_gia, ky_candidates)."""
+    print("KẾT QUẢ CẤU TRÚC SAU KHI XỬ LÝ GEMINI:")
     try:
-        doc = docx.Document(io.BytesIO(file_bytes))
-    except (zipfile.BadZipFile, KeyError, ValueError) as exc:
-        raise ValueError("Invalid or corrupt DOCX file") from exc
-
-    full_text = get_full_text_docx(doc)
-    quy_danh_gia = extract_quy_danh_gia_from_text(full_text)
-    ky_candidates = extract_all_ky_candidates(full_text)
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception:
+        print(data)
 
     rows = []
-    for table in doc.tables:
-        for row in table.rows:
-            cells = [cell.text.strip() for cell in row.cells]
-            if len(cells) < 8:
-                continue
-            ma = extract_ma_chi_tieu(cells[0])
-            if ma:
-                noi_dung = cells[1].replace("\n", " ") if cells[1] else "N/A"
-                dinh_ky = cells[2].replace("\n", " ") if cells[2] else "N/A"
-                muc_dang_ky = cells[3].replace("\n", " ") if cells[3] else "N/A"
-                muc_dat = cells[4].replace("\n", " ") if cells[4] else "N/A"
-                ket_qua = clean_status_text(cells[5])
-                nguyen_nhan = cells[6].replace("\n", " ") if cells[6] else ""
-                hanh_dong = cells[7].replace("\n", " ") if cells[7] else ""
-                rows.append((ma, noi_dung, dinh_ky, muc_dang_ky, muc_dat, ket_qua, nguyen_nhan, hanh_dong))
-    return rows, quy_danh_gia, ky_candidates
+    quy_list = []
+    for item in data:
+        ma = item.get("ma_chi_tieu", "N/A")
+        quy = item.get("quy_danh_gia", "N/A")
+
+        if "MT" in str(ma).upper():
+            rows.append((
+                ma,
+                item.get("noi_dung_muc_tieu", "N/A"),
+                item.get("dinh_ky_thu_thap", "N/A"),
+                item.get("muc_dang_ky", "N/A"),
+                item.get("muc_dat", "N/A"),
+                item.get("ket_qua_he_thong", "N/A"),
+                item.get("nguyen_nhan", ""),
+                item.get("hanh_dong_khac_phuc", "")
+            ))
+
+            quy_match = re.search(r"Q[1-4]/\d{4}", str(quy).upper())
+            if quy_match:
+                quy_list.append(quy_match.group(0))
+
+    quy_danh_gia_final = None
+    if quy_list:
+        quy_danh_gia_final = max(set(quy_list), key=quy_list.count)
+
+    return rows, quy_danh_gia_final, set(quy_list)
 
 
 def main():
@@ -212,7 +264,8 @@ def main():
     if "Contents" not in response:
         sys.exit(0)
 
-    processed_keys = []
+    successful_keys = []
+    failed_keys = []
     for obj in response["Contents"]:
         file_key = obj["Key"]
 
@@ -222,13 +275,17 @@ def main():
         file_bytes = s3_client.get_object(Bucket=BUCKET_NAME, Key=file_key)["Body"].read()
 
         raw_rows, quy_danh_gia, ky_candidates = [], None, set()
-        if ext == ".pdf":
-            raw_rows, quy_danh_gia, ky_candidates = parse_pdf(file_bytes)
-        elif ext == ".docx":
+        
+        # Xử lý bằng Gemini thay vì pdfplumber/docx
+        if ext in [".pdf", ".docx"]:
             try:
-                raw_rows, quy_danh_gia, ky_candidates = parse_docx(file_bytes)
-            except ValueError as exc:
-                print(f"WARNING: Bỏ qua file không hợp lệ {file_key}: {exc}")
+                raw_rows, quy_danh_gia, ky_candidates = parse_with_gemini(file_bytes, ext, file_key)
+                
+                # Rate limiting: wait 65 seconds between API calls to respect per-minute quota
+                print("⏳ Rate limiting: waiting 30 seconds before next API call...")
+                time.sleep(30)  # Wait 30 seconds to avoid hitting the quota limi
+            except Exception as exc:
+                print(f"WARNING: Lỗi bóc tách qua AI cho file {file_key}: {exc}")
         else:
             print(f"SKIP: Định dạng không hỗ trợ cho file {file_key}")
 
@@ -248,28 +305,42 @@ def main():
             )
 
         for ma, noi_dung, dk, m_dk, m_dat, kq, nguyen_nhan, hanh_dong in raw_rows:
-            nhom = ma.split("-")[0]
+            nhom = str(ma).split("-")[0].strip().upper()
+            
+            # --- VALIDATION CHECKSUM & CLEANING ---
+            # Làm sạch chuỗi trước khi băm để tránh trùng lặp do khoảng trắng sinh ra từ AI
+            ma_clean = str(ma).strip().upper()
+            quy_clean = str(quy_danh_gia_final).strip().upper()
+            dk_clean = str(dk).strip().lower()
+            mdk_clean = str(m_dk).strip().lower()
+            mdat_clean = str(m_dat).strip().lower()
+            kq_clean = clean_status_text(kq)
+            
             checksum = generate_checksum(
-                f"{file_key}_{ma}_{quy_danh_gia_final}_{dk}_{m_dk}_{m_dat}_{kq}"
+                f"{file_key}_{ma_clean}_{quy_clean}_{dk_clean}_{mdk_clean}_{mdat_clean}_{kq_clean}"
             )
+            
             extracted_data.append({
                 "file_nguon": os.path.basename(file_key),
-                "ma_chi_tieu": ma,
+                "ma_chi_tieu": str(ma).strip().upper(),
                 "nhom_don_vi": nhom,
                 "quy_danh_gia": quy_danh_gia_final,
-                "noi_dung_muc_tieu": noi_dung,
-                "dinh_ky_thu_thap": dk,
-                "muc_dang_ky": m_dk,
+                "noi_dung_muc_tieu": str(noi_dung).strip(),
+                "dinh_ky_thu_thap": str(dk).strip(),
+                "muc_dang_ky": str(m_dk).strip(),
                 "muc_dang_ky_numeric": parse_percent_or_number(m_dk),
-                "muc_dat": m_dat,
+                "muc_dat": str(m_dat).strip(),
                 "muc_dat_numeric": parse_percent_or_number(m_dat),
-                "ket_qua_he_thong": kq,
-                "nguyen_nhan": nguyen_nhan,
-                "hanh_dong_khac_phuc": hanh_dong,
+                "ket_qua_he_thong": kq_clean,
+                "nguyen_nhan": str(nguyen_nhan).strip(),
+                "hanh_dong_khac_phuc": str(hanh_dong).strip(),
                 "checksum_sha256": checksum,
             })
 
-        processed_keys.append(file_key)
+        if raw_rows:
+            successful_keys.append(file_key)
+        else:
+            failed_keys.append(file_key)
 
     if extracted_data:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -279,12 +350,12 @@ def main():
         parquet_buffer = io.BytesIO()
         df.to_parquet(parquet_buffer, index=False, engine="pyarrow")
         s3_client.put_object(Bucket=BUCKET_NAME, Key=output_key, Body=parquet_buffer.getvalue())
-        print(f"Đã tạo Parquet: {output_key} ({len(extracted_data)} dòng)")
+        print(f"✅ Đã tạo Parquet: {output_key} ({len(extracted_data)} dòng)")
     else:
-        print("Không có dữ liệu hợp lệ nào được trích xuất để ghi Parquet.")
+        print("❌ Không có dữ liệu hợp lệ nào được trích xuất để ghi Parquet.")
 
-    if processed_keys:
-        for key in processed_keys:
+    if successful_keys:
+        for key in successful_keys:
             archive_key = key.replace(SOURCE_PREFIX, ARCHIVE_PREFIX, 1)
             s3_client.copy_object(
                 Bucket=BUCKET_NAME,
@@ -293,9 +364,15 @@ def main():
             )
             s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
 
-        print(f"HOÀN THÀNH INGEST! Đã dọn dẹp {len(processed_keys)} files khỏi staging.")
-    else:
-        print("Không có file nào mới để xử lý.")
+        print(f"✨ HOÀN THÀNH INGEST! Đã dọn dẹp {len(successful_keys)} file(s) thành công khỏi staging.")
+
+    if failed_keys:
+        print(f"⚠️ CẢNH BÁO: {len(failed_keys)} file(s) trong staging không trích xuất được dữ liệu: {failed_keys}")
+        print("Các file lỗi được giữ nguyên ở staging/ để kiểm tra và xử lý.")
+
+    if not extracted_data and failed_keys:
+        print("❌ ERROR: Không tạo được file Parquet nào do tất cả các file nguồn đều bóc tách thất bại.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

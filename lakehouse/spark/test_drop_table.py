@@ -1,35 +1,6 @@
-import sys
-print("1. Bắt đầu file", flush=True)
-
 import os
-print("2. Đã import os", flush=True)
-
 from pyspark.sql import SparkSession
-print("3. Đã import SparkSession", flush=True)
-
-from pyspark.sql.functions import col, when, count, round, current_timestamp, lag, create_map, lit, regexp_extract
-print("4. Đã import pyspark.sql.functions", flush=True)
-
-from pyspark.sql.window import Window
-print("5. Đã import Window", flush=True)
-
-from itertools import chain
-print("6. Đã import itertools.chain", flush=True)
-
-from nessie_catalog_utils import (
-    make_branch_name, create_branch, use_branch, use_main,
-    merge_branch_to_main, check_quality_gold, DataQualityError,
-)
-print("7. Đã import nessie_catalog_utils", flush=True)
-
-from openmetadata_lineage_utils import get_client, push_lineage_safe
-print("8. Đã import openmetadata_lineage_utils", flush=True)
-
-from env_config import (
-    MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT,
-    NESSIE_API_URL, HADOOP_HOME, SPARK_LOCAL_IP,
-)
-print("9. Đã import env_config", flush=True)
+from env_config import MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT, NESSIE_API_URL, HADOOP_HOME, SPARK_LOCAL_IP
 
 os.environ["HADOOP_HOME"] = HADOOP_HOME
 os.environ["PATH"] = os.path.join(HADOOP_HOME, "bin") + ";" + os.environ.get("PATH", "")
@@ -39,15 +10,13 @@ os.environ["SPARK_LOCAL_IP"] = SPARK_LOCAL_IP
 os.environ["PYSPARK_SUBMIT_ARGS"] = (
     "--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,"
     "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.77.1,"
-    "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 "
+    "org.apache.hadoop:hadoop-aws:3.3.4 "
     "pyspark-shell"
 )
-print("10. Đã set biến môi trường", flush=True)
 
-print("11. Chuẩn bị gọi SparkSession.builder...", flush=True)
 spark = (
     SparkSession.builder
-    .appName("Debug_Gold")
+    .appName("TestDropTable")
     .config("spark.driver.host", SPARK_LOCAL_IP)
     .config("spark.driver.bindAddress", SPARK_LOCAL_IP)
     .config("spark.sql.extensions",
@@ -68,10 +37,30 @@ spark = (
     .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
     .getOrCreate()
 )
-print("12. Đã tạo Spark Session THÀNH CÔNG!", flush=True)
+spark.sparkContext.setLogLevel("ERROR")
 
-df = spark.read.table("lakehouse.silver.kpi_cusc_master")
-print(f"13. Đọc bảng Silver OK, số dòng = {df.count()}", flush=True)
+try:
+    spark.sql("DROP TABLE IF EXISTS lakehouse.gold.kpi_tong_hop_don_vi")
+    print("Dropped kpi_tong_hop_don_vi successfully")
+except Exception as e:
+    print(f"Failed to drop kpi_tong_hop_don_vi: {e}")
+
+try:
+    spark.sql("DROP TABLE IF EXISTS lakehouse.gold.kpi_chi_tiet_dashboard")
+    print("Dropped kpi_chi_tiet_dashboard successfully")
+except Exception as e:
+    print(f"Failed to drop kpi_chi_tiet_dashboard: {e}")
+
+try:
+    spark.sql("DROP TABLE IF EXISTS lakehouse.gold.kpi_so_sanh_ky")
+    print("Dropped kpi_so_sanh_ky successfully")
+except Exception as e:
+    print(f"Failed to drop kpi_so_sanh_ky: {e}")
+
+try:
+    spark.sql("DROP TABLE IF EXISTS lakehouse.gold.dm_chi_tieu")
+    print("Dropped dm_chi_tieu successfully")
+except Exception as e:
+    print(f"Failed to drop dm_chi_tieu: {e}")
 
 spark.stop()
-print("14. HOÀN TẤT DEBUG", flush=True)
