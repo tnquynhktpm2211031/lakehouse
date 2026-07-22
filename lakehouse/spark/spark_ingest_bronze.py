@@ -12,25 +12,48 @@ import sys
 import hashlib
 import re
 import zipfile
+import xml.etree.ElementTree as ET
 import boto3
 import json
 import time
 import tempfile
 from datetime import datetime
 import pandas as pd
-import google.generativeai as genai
-import typing_extensions as typing
+from pydantic import BaseModel
+
+from google import genai
+from google.genai import types
 
 from env_config import (
     MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, 
     MINIO_BUCKET_NAME, GEMINI_API_KEY
 )
 
-# Cấu hình Gemini
+# Cấu hình Gemini Client
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 else:
+    client = None
     print("WARNING: GEMINI_API_KEY is not set. The Gemini API calls will fail.")
+
+
+def retry_with_backoff(func, max_retries=3, initial_delay=15):
+    """
+    Retry function with exponential backoff for quota errors.
+    """
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            error_str = str(e)
+            # Check for quota/rate limit errors
+            if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                if attempt < max_retries - 1:
+                    wait_time = initial_delay * (2 ** attempt)
+                    print(f"⚠️ Quota exceeded. Retrying in {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(wait_time)
+                    continue
+            raise
 
 BUCKET_NAME    = MINIO_BUCKET_NAME
 SOURCE_PREFIX  = "staging/"
@@ -42,7 +65,7 @@ KETQUA_CHUA_DEN_KY   = "CHƯA ĐẾN KỲ ĐÁNH GIÁ"
 QUY_DANH_GIA_UNKNOWN = "UNKNOWN_KY"
 
 # Khai báo cấu trúc Schema ép Gemini trả về
-class KpiRecord(typing.TypedDict):
+class KpiRecord(BaseModel):
     ma_chi_tieu: str
     quy_danh_gia: str
     noi_dung_muc_tieu: str
@@ -76,7 +99,7 @@ def clean_status_text(text: str) -> str:
 
 
 def parse_percent_or_number(text):
-    if text is None or text == "N/A" or not text.strip():
+    if text is None or text == "N/A" or not str(text).strip():
         return None
     cleaned = str(text).strip().replace("%", "").replace(",", ".")
     try:
@@ -85,107 +108,152 @@ def parse_percent_or_number(text):
         return None
 
 
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    """Trích xuất văn bản thô từ file DOCX mà không cần thư viện bên ngoài."""
+    text_runs = []
+    with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+        try:
+            xml_content = z.read("word/document.xml")
+        except KeyError:
+            return ""
+
+    root = ET.fromstring(xml_content)
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    for paragraph in root.findall(".//w:p", namespace):
+        texts = [node.text for node in paragraph.findall(".//w:t", namespace) if node.text]
+        if texts:
+            text_runs.append("".join(texts))
+
+    return "\n".join(text_runs)
+
+
 def parse_with_gemini(file_bytes: bytes, ext: str, file_key: str):
     """
-    Sử dụng Gemini File API để phân tích file PDF hoặc DOCX.
+    Sử dụng Gemini File API để phân tích file PDF hoặc văn bản đã trích xuất từ DOCX.
     Trả về (rows, quy_danh_gia, ky_candidates)
     """
-    if not GEMINI_API_KEY:
+    if not client:
         raise ValueError("GEMINI_API_KEY chưa được cấu hình!")
-    
-    # Tạo file tạm trên hệ thống vì genai.upload_file yêu cầu path
-    tmp_path = ""
-    uploaded_file = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
-            tmp.write(file_bytes)
-            tmp_path = tmp.name
-        
-        # Upload file lên Gemini API
-        print(f"Uploading {file_key} to Gemini API...")
-        uploaded_file = genai.upload_file(path=tmp_path)
-        
-        # Đợi file ở trạng thái ACTIVE (đặc biệt quan trọng với PDF lớn)
-        while uploaded_file.state.name == "PROCESSING":
-            print(f"File {file_key} is processing, waiting 2 seconds...")
-            time.sleep(2)
-            uploaded_file = genai.get_file(uploaded_file.name)
-            
-        if uploaded_file.state.name == "FAILED":
-            raise ValueError(f"Gemini API failed to process file {file_key}")
-            
-        print(f"File {file_key} is ready. Requesting extraction...")
-        
-        # Chọn model: flash đủ tốt cho task OCR
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        
+
+    if ext == ".docx":
+        file_text = extract_text_from_docx(file_bytes)
+        if not file_text.strip():
+            raise ValueError("Không thể trích xuất văn bản từ file DOCX.")
+
         prompt = (
             "Bạn là một chuyên gia phân tích dữ liệu KPI giáo dục. "
-            "Hãy đọc tài liệu đính kèm và trích xuất tất cả các dòng chỉ tiêu KPI trong bảng. "
+            "Hãy đọc văn bản dưới đây và trích xuất tất cả các dòng chỉ tiêu KPI trong bảng. "
             "Trả về một mảng JSON các đối tượng có các trường (keys) đúng theo cấu trúc được yêu cầu. "
             "Lưu ý: "
             "1. ma_chi_tieu phải là định dạng chữ HOA và có dấu gạch ngang (VD: ĐT-MT01, HT-MT05). "
             "2. quy_danh_gia phải có dạng Q[1-4]/[Năm], ví dụ Q1/2026. Nếu không tìm thấy, để trống hoặc 'N/A'. "
             "3. Nếu không có giá trị ở ô nào, trả về 'N/A' hoặc chuỗi rỗng. "
             "4. Đảm bảo trích xuất đầy đủ tất cả các trang, không bỏ sót dòng nào."
+            "\n\nVĂN BẢN:\n" + file_text
         )
-        
-        response = model.generate_content(
-            [uploaded_file, prompt],
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                response_schema=list[KpiRecord],
-                temperature=0.0,
-            ),
-            request_options={"timeout": 600}
-        )
-        
-        raw_json = response.text
-        data = json.loads(raw_json)
-        
-        rows = []
-        quy_list = []
-        for item in data:
-            ma = item.get("ma_chi_tieu", "N/A")
-            quy = item.get("quy_danh_gia", "N/A")
-            
-            # Chỉ lấy các dòng có mã chỉ tiêu hợp lệ (có MT)
-            if "MT" in str(ma).upper():
-                rows.append((
-                    ma,
-                    item.get("noi_dung_muc_tieu", "N/A"),
-                    item.get("dinh_ky_thu_thap", "N/A"),
-                    item.get("muc_dang_ky", "N/A"),
-                    item.get("muc_dat", "N/A"),
-                    item.get("ket_qua_he_thong", "N/A"),
-                    item.get("nguyen_nhan", ""),
-                    item.get("hanh_dong_khac_phuc", "")
-                ))
-                
-                # Trích xuất quý để tính tổng thể cho cả file nếu cần
-                quy_match = re.search(r"Q[1-4]/\d{4}", str(quy).upper())
-                if quy_match:
-                    quy_list.append(quy_match.group(0))
-        
-        # Chọn quy_danh_gia đại diện (lấy giá trị xuất hiện nhiều nhất)
-        quy_danh_gia_final = None
-        if quy_list:
-            quy_danh_gia_final = max(set(quy_list), key=quy_list.count)
-            
-        return rows, quy_danh_gia_final, set(quy_list)
-        
-    finally:
-        # Xóa file tạm local
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
-            
-        # Xóa file trên Gemini để tránh rò rỉ quota/bảo mật
-        if uploaded_file:
-            try:
-                genai.delete_file(uploaded_file.name)
-                print(f"Deleted file from Gemini: {uploaded_file.name}")
-            except Exception as e:
-                print(f"Failed to delete Gemini file: {e}")
+
+        def make_api_call():
+            return client.models.generate_content(
+                model="models/gemini-flash-lite-latest",
+                contents=[prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=list[KpiRecord],
+                    temperature=0.0,
+                )
+            )
+
+        response = retry_with_backoff(make_api_call, max_retries=3, initial_delay=15)
+    else:
+        tmp_path = ""
+        uploaded_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+                tmp.write(file_bytes)
+                tmp_path = tmp.name
+
+            print(f"Uploading {file_key} to Gemini API...")
+            uploaded_file = client.files.upload(file=tmp_path)
+
+            while uploaded_file.state.name == "PROCESSING":
+                print(f"File {file_key} is processing, waiting 2 seconds...")
+                time.sleep(2)
+                uploaded_file = client.files.get(name=uploaded_file.name)
+
+            if uploaded_file.state.name == "FAILED":
+                raise ValueError(f"Gemini API failed to process file {file_key}")
+
+            print(f"File {file_key} is ready. Requesting extraction...")
+            prompt = (
+                "Bạn là một chuyên gia phân tích dữ liệu KPI giáo dục. "
+                "Hãy đọc tài liệu đính kèm và trích xuất tất cả các dòng chỉ tiêu KPI trong bảng. "
+                "Trả về một mảng JSON các đối tượng có các trường (keys) đúng theo cấu trúc được yêu cầu. "
+                "Lưu ý: "
+                "1. ma_chi_tieu phải là định dạng chữ HOA và có dấu gạch ngang (VD: ĐT-MT01, HT-MT05). "
+                "2. quy_danh_gia phải có dạng Q[1-4]/[Năm], ví dụ Q1/2026. Nếu không tìm thấy, để trống hoặc 'N/A'. "
+                "3. Nếu không có giá trị ở ô nào, trả về 'N/A' hoặc chuỗi rỗng. "
+                "4. Đảm bảo trích xuất đầy đủ tất cả các trang, không bỏ sót dòng nào."
+            )
+
+            def make_api_call():
+                return client.models.generate_content(
+                    model="models/gemini-flash-lite-latest",
+                    contents=[uploaded_file, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=list[KpiRecord],
+                        temperature=0.0,
+                    )
+                )
+
+            response = retry_with_backoff(make_api_call, max_retries=3, initial_delay=15)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+            if uploaded_file:
+                try:
+                    client.files.delete(name=uploaded_file.name)
+                    print(f"Deleted file from Gemini: {uploaded_file.name}")
+                except Exception as e:
+                    print(f"Failed to delete Gemini file: {e}")
+
+    raw_json = response.text
+    data = json.loads(raw_json)
+
+    print("KẾT QUẢ CẤU TRÚC SAU KHI XỬ LÝ GEMINI:")
+    try:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    except Exception:
+        print(data)
+
+    rows = []
+    quy_list = []
+    for item in data:
+        ma = item.get("ma_chi_tieu", "N/A")
+        quy = item.get("quy_danh_gia", "N/A")
+
+        if "MT" in str(ma).upper():
+            rows.append((
+                ma,
+                item.get("noi_dung_muc_tieu", "N/A"),
+                item.get("dinh_ky_thu_thap", "N/A"),
+                item.get("muc_dang_ky", "N/A"),
+                item.get("muc_dat", "N/A"),
+                item.get("ket_qua_he_thong", "N/A"),
+                item.get("nguyen_nhan", ""),
+                item.get("hanh_dong_khac_phuc", "")
+            ))
+
+            quy_match = re.search(r"Q[1-4]/\d{4}", str(quy).upper())
+            if quy_match:
+                quy_list.append(quy_match.group(0))
+
+    quy_danh_gia_final = None
+    if quy_list:
+        quy_danh_gia_final = max(set(quy_list), key=quy_list.count)
+
+    return rows, quy_danh_gia_final, set(quy_list)
 
 
 def main():
@@ -212,8 +280,9 @@ def main():
             try:
                 raw_rows, quy_danh_gia, ky_candidates = parse_with_gemini(file_bytes, ext, file_key)
                 
-                # Cảnh báo Rate Limit và cho nghỉ ngắn giữa các files
-                time.sleep(2) 
+            
+                print("⏳ Rate limiting: waiting 65 seconds before next API call...")
+                time.sleep(30)  # Wait 30 seconds before next file to avoid hitting the quota
             except Exception as exc:
                 print(f"WARNING: Lỗi bóc tách qua AI cho file {file_key}: {exc}")
         else:

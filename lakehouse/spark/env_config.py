@@ -1,14 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-env_config.py
-------------------------------------------------------------
-Module tập trung load biến môi trường cho toàn bộ Spark pipeline.
-Ưu tiên: biến môi trường hệ thống > file .env > giá trị mặc định.
 
-Cách dùng trong các script khác:
-    from env_config import MINIO_ACCESS_KEY, MINIO_SECRET_KEY, ...
-------------------------------------------------------------
-"""
 
 import os
 from pathlib import Path
