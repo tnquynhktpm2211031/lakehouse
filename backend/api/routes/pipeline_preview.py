@@ -91,11 +91,19 @@ def preview_bronze(limit: int = Query(50, ge=1, le=500), current_user=Depends(ge
     """Đọc file Parquet Bronze MỚI NHẤT trên MinIO (không qua Trino được vì
     Bronze chỉ là file thô, chưa phải bảng Iceberg)."""
     s3 = _get_s3_client()
-    resp = s3.list_objects_v2(Bucket=MINIO_BUCKET, Prefix="bronze/data_extracted_")
-    if "Contents" not in resp or not resp["Contents"]:
-        raise HTTPException(status_code=404, detail="Chưa có file Parquet nào ở tầng Bronze.")
+    resp_bronze = s3.list_objects_v2(Bucket=MINIO_BUCKET, Prefix="bronze/data_extracted_")
+    resp_archive = s3.list_objects_v2(Bucket=MINIO_BUCKET, Prefix="bronze_archive/data_extracted_")
+    
+    contents = []
+    if "Contents" in resp_bronze and resp_bronze["Contents"]:
+        contents.extend(resp_bronze["Contents"])
+    if "Contents" in resp_archive and resp_archive["Contents"]:
+        contents.extend(resp_archive["Contents"])
+        
+    if not contents:
+        raise HTTPException(status_code=404, detail="Chưa có file Parquet nào ở tầng Bronze hoặc Archive.")
 
-    latest = max(resp["Contents"], key=lambda o: o["LastModified"])
+    latest = max(contents, key=lambda o: o["LastModified"])
     file_bytes = s3.get_object(Bucket=MINIO_BUCKET, Key=latest["Key"])["Body"].read()
     df = pd.read_parquet(io.BytesIO(file_bytes))
     return {

@@ -31,6 +31,24 @@ cast() thuần Spark SQL, chạy trong JVM, không còn spawn Python con nữa.
 """
 
 import os
+import sys
+from env_config import (
+    MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT,
+    NESSIE_API_URL, HADOOP_HOME, SPARK_LOCAL_IP,
+)
+
+os.environ["HADOOP_HOME"]           = HADOOP_HOME
+os.environ["PATH"]                  = os.path.join(HADOOP_HOME, "bin") + ";" + os.environ.get("PATH", "")
+os.environ["AWS_ACCESS_KEY_ID"]     = MINIO_ACCESS_KEY
+os.environ["AWS_SECRET_ACCESS_KEY"] = MINIO_SECRET_KEY
+os.environ["SPARK_LOCAL_IP"] = SPARK_LOCAL_IP
+os.environ["PYSPARK_SUBMIT_ARGS"] = (
+    "--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,"
+    "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.77.1,"
+    "org.apache.hadoop:hadoop-aws:3.3.4 "
+    "pyspark-shell"
+)
+
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     col, when, count, round, current_timestamp, lag, create_map, lit,
@@ -49,23 +67,6 @@ from nessie_catalog_utils import (
     DataQualityError,
 )
 from openmetadata_lineage_utils import get_client, push_lineage_safe
-from env_config import (
-    MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_ENDPOINT,
-    NESSIE_API_URL, HADOOP_HOME, SPARK_LOCAL_IP,
-)
-
-os.environ["HADOOP_HOME"]           = HADOOP_HOME
-os.environ["PATH"]                  = os.path.join(HADOOP_HOME, "bin") + ";" + os.environ.get("PATH", "")
-os.environ["AWS_ACCESS_KEY_ID"]     = MINIO_ACCESS_KEY
-os.environ["AWS_SECRET_ACCESS_KEY"] = MINIO_SECRET_KEY
-os.environ["SPARK_LOCAL_IP"] = SPARK_LOCAL_IP
-
-os.environ["PYSPARK_SUBMIT_ARGS"] = (
-    "--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,"
-    "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.77.1,"
-    "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 "
-    "pyspark-shell"
-)
 
 GOLD_SUMMARY_TABLE    = "lakehouse.gold.kpi_tong_hop_don_vi"
 GOLD_DETAIL_TABLE     = "lakehouse.gold.kpi_chi_tiet_dashboard"
@@ -159,6 +160,7 @@ def with_ten_phong_ban(df):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     spark = get_spark_session()
     spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.gold")
 

@@ -264,7 +264,8 @@ def main():
     if "Contents" not in response:
         sys.exit(0)
 
-    processed_keys = []
+    successful_keys = []
+    failed_keys = []
     for obj in response["Contents"]:
         file_key = obj["Key"]
 
@@ -280,9 +281,9 @@ def main():
             try:
                 raw_rows, quy_danh_gia, ky_candidates = parse_with_gemini(file_bytes, ext, file_key)
                 
-            
-                print("⏳ Rate limiting: waiting 65 seconds before next API call...")
-                time.sleep(30)  # Wait 30 seconds before next file to avoid hitting the quota
+                # Rate limiting: wait 65 seconds between API calls to respect per-minute quota
+                print("⏳ Rate limiting: waiting 30 seconds before next API call...")
+                time.sleep(30)  # Wait 30 seconds to avoid hitting the quota limi
             except Exception as exc:
                 print(f"WARNING: Lỗi bóc tách qua AI cho file {file_key}: {exc}")
         else:
@@ -336,7 +337,10 @@ def main():
                 "checksum_sha256": checksum,
             })
 
-        processed_keys.append(file_key)
+        if raw_rows:
+            successful_keys.append(file_key)
+        else:
+            failed_keys.append(file_key)
 
     if extracted_data:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -346,12 +350,12 @@ def main():
         parquet_buffer = io.BytesIO()
         df.to_parquet(parquet_buffer, index=False, engine="pyarrow")
         s3_client.put_object(Bucket=BUCKET_NAME, Key=output_key, Body=parquet_buffer.getvalue())
-        print(f"Đã tạo Parquet: {output_key} ({len(extracted_data)} dòng)")
+        print(f"✅ Đã tạo Parquet: {output_key} ({len(extracted_data)} dòng)")
     else:
-        print("Không có dữ liệu hợp lệ nào được trích xuất để ghi Parquet.")
+        print("❌ Không có dữ liệu hợp lệ nào được trích xuất để ghi Parquet.")
 
-    if processed_keys:
-        for key in processed_keys:
+    if successful_keys:
+        for key in successful_keys:
             archive_key = key.replace(SOURCE_PREFIX, ARCHIVE_PREFIX, 1)
             s3_client.copy_object(
                 Bucket=BUCKET_NAME,
@@ -360,9 +364,15 @@ def main():
             )
             s3_client.delete_object(Bucket=BUCKET_NAME, Key=key)
 
-        print(f"HOÀN THÀNH INGEST! Đã dọn dẹp {len(processed_keys)} files khỏi staging.")
-    else:
-        print("Không có file nào mới để xử lý.")
+        print(f"✨ HOÀN THÀNH INGEST! Đã dọn dẹp {len(successful_keys)} file(s) thành công khỏi staging.")
+
+    if failed_keys:
+        print(f"⚠️ CẢNH BÁO: {len(failed_keys)} file(s) trong staging không trích xuất được dữ liệu: {failed_keys}")
+        print("Các file lỗi được giữ nguyên ở staging/ để kiểm tra và xử lý.")
+
+    if not extracted_data and failed_keys:
+        print("❌ ERROR: Không tạo được file Parquet nào do tất cả các file nguồn đều bóc tách thất bại.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

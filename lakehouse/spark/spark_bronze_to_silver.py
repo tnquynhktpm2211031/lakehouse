@@ -37,6 +37,7 @@ from nessie_catalog_utils import (
     merge_branch_to_main,
     check_quality_silver,
     DataQualityError,
+    delete_nessie_orphaned_key,
 )
 from openmetadata_lineage_utils import get_client, ensure_bronze_table, push_lineage_safe
 from env_config import (
@@ -52,7 +53,7 @@ os.environ["SPARK_LOCAL_IP"]        = SPARK_LOCAL_IP
 os.environ["PYSPARK_SUBMIT_ARGS"] = (
     "--packages org.apache.iceberg:iceberg-spark-runtime-3.5_2.12:1.4.3,"
     "org.projectnessie.nessie-integrations:nessie-spark-extensions-3.5_2.12:0.77.1,"
-    "org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.262 "
+    "org.apache.hadoop:hadoop-aws:3.3.4 "
     "pyspark-shell"
 )
 
@@ -95,7 +96,7 @@ def get_s3_client():
     )
 
 
-def init_silver_table_if_needed(spark):
+def init_silver_table_if_needed(spark, branch_name="main"):
     """Đảm bảo namespace + bảng Silver tồn tại, và tự bổ sung cột mới
     (schema evolution) nếu bảng cũ đã tồn tại từ trước khi có các cột này."""
     spark.sql("CREATE NAMESPACE IF NOT EXISTS lakehouse.silver")
@@ -126,11 +127,13 @@ def init_silver_table_if_needed(spark):
     except Exception as exc:
         error_text = str(exc).lower()
         if any(token in error_text for token in ["notfoundexception", "metadata", "input stream", "no such file or directory"]):
-            print(f"⚠️ Bảng {SILVER_TABLE} có metadata Iceberg bị hỏng hoặc thiếu. Đang tạo lại bảng từ đầu...")
+            print(f"⚠️ Bảng {SILVER_TABLE} có metadata Iceberg bị hỏng hoặc thiếu. Đang dọn dẹp key trong Nessie catalog...")
+            delete_nessie_orphaned_key(SILVER_TABLE, branch_name)
+            delete_nessie_orphaned_key(SILVER_TABLE, "main")
             try:
                 spark.sql(f"DROP TABLE IF EXISTS {SILVER_TABLE}")
-            except Exception as drop_exc:
-                print(f"⚠️ Không xoá được bảng cũ: {drop_exc}")
+            except Exception:
+                pass
             spark.sql(create_sql)
             print(f"✅ Đã tạo lại bảng {SILVER_TABLE}.")
         else:
@@ -205,6 +208,7 @@ def archive_processed_bronze_files(s3_client):
     if not contents:
         return
 
+
     for obj in contents:
         key = obj["Key"]
         archive_key = key.replace(BRONZE_PREFIX, BRONZE_ARCHIVE_PREFIX, 1)
@@ -231,7 +235,7 @@ def main():
         create_branch(spark, branch_name, from_ref="main")
         use_branch(spark, branch_name)
 
-        init_silver_table_if_needed(spark)
+        init_silver_table_if_needed(spark, branch_name)
 
         try:
             df_bronze = spark.read.option("mergeSchema", "true").parquet(bronze_parquet_path)
@@ -250,7 +254,22 @@ def main():
         spark.sql(f"""
             MERGE INTO {SILVER_TABLE} t
             USING bronze_staging_view s
-            ON t.checksum_sha256 = s.checksum_sha256
+            ON t.ma_chi_tieu = s.ma_chi_tieu AND t.quy_danh_gia = s.quy_danh_gia
+            WHEN MATCHED THEN
+              UPDATE SET
+                t.file_nguon = s.file_nguon,
+                t.nhom_don_vi = s.nhom_don_vi,
+                t.noi_dung_muc_tieu = s.noi_dung_muc_tieu,
+                t.dinh_ky_thu_thap = s.dinh_ky_thu_thap,
+                t.muc_dang_ky = s.muc_dang_ky,
+                t.muc_dang_ky_numeric = s.muc_dang_ky_numeric,
+                t.muc_dat = s.muc_dat,
+                t.muc_dat_numeric = s.muc_dat_numeric,
+                t.ket_qua_he_thong = s.ket_qua_he_thong,
+                t.nguyen_nhan = s.nguyen_nhan,
+                t.hanh_dong_khac_phuc = s.hanh_dong_khac_phuc,
+                t.checksum_sha256 = s.checksum_sha256,
+                t.thoi_gian_ingest_silver = s.thoi_gian_ingest_silver
             WHEN NOT MATCHED THEN
               INSERT (
                 file_nguon, ma_chi_tieu, nhom_don_vi, quy_danh_gia, noi_dung_muc_tieu,
@@ -265,7 +284,7 @@ def main():
                 s.thoi_gian_ingest_silver
               )
         """)
-        print(f"✅ Đã ghi dữ liệu Rich Schema vào bảng Iceberg trên branch tạm thời '{branch_name}'.")
+        print(f"✅ Đã ghi/cập nhật dữ liệu vào bảng Iceberg trên branch tạm thời '{branch_name}'.")
 
         # Data quality check TRÊN BRANCH (bao gồm check trùng khóa nghiệp vụ và UNKNOWN_KY)
         check_quality_silver(spark, SILVER_TABLE)
@@ -273,9 +292,7 @@ def main():
         merge_branch_to_main(spark, branch_name)
         use_main(spark)
 
-        # [MỚI] Archive các file Bronze đã xử lý thành công - chỉ làm SAU KHI
-        # merge thành công, để nếu quality-gate chặn thì Bronze vẫn còn nguyên
-        # để chạy lại sau khi sửa lỗi.
+        # Archive các file Bronze đã xử lý thành công - chỉ làm SAU KHI merge thành công
         archive_processed_bronze_files(s3_client)
 
         print("\n📊 CHI TIẾT DỮ LIỆU CHUẨN HÓA TRONG BẢNG ICEBERG SILVER (main):")
@@ -295,8 +312,8 @@ def main():
                 om_client, bronze_fqn, silver_fqn,
                 sql_query=(
                     "MERGE INTO lakehouse.silver.kpi_cusc_master t "
-                    "USING bronze_staging_view s ON t.checksum_sha256 = s.checksum_sha256 "
-                    "WHEN NOT MATCHED THEN INSERT *"
+                    "USING bronze_staging_view s ON t.ma_chi_tieu = s.ma_chi_tieu AND t.quy_danh_gia = s.quy_danh_gia "
+                    "WHEN MATCHED THEN UPDATE * WHEN NOT MATCHED THEN INSERT *"
                 ),
                 description="Nạp dữ liệu KPI đã trích xuất từ PDF/DOCX (Bronze) vào bảng Iceberg Silver, "
                              "chạy bởi spark_bronze_to_silver.py",
@@ -306,15 +323,17 @@ def main():
 
     except DataQualityError as dqe:
         use_main(spark)
-        print(f"DỮ LIỆU KHÔNG ĐẠT CHẤT LƯỢNG: {dqe}")
+        print(f"❌ DỮ LIỆU KHÔNG ĐẠT CHẤT LƯỢNG: {dqe}")
         print(f"Branch '{branch_name}' được giữ nguyên (không merge vào main) để kiểm tra thủ công.")
         print(f"Xem lại dữ liệu lỗi bằng: SELECT * FROM {SILVER_TABLE}@{branch_name}")
         print(f"(Bronze KHÔNG bị archive vì chưa merge thành công - có thể sửa lỗi rồi chạy lại.)")
+        sys.exit(1)
 
     except Exception as e:
         use_main(spark)
-        print(f"Lỗi xử lý đường ống dữ liệu: {str(e)}")
+        print(f"❌ Lỗi xử lý đường ống dữ liệu: {str(e)}")
         print(f"    Branch '{branch_name}' được giữ nguyên để kiểm tra.")
+        sys.exit(1)
 
     finally:
         spark.stop()
