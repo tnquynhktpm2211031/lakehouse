@@ -7,7 +7,7 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'pipeline' | 'catalog'
 
-  const supersetUrl = import.meta.env.VITE_SUPERSET_DASHBOARD_URL || "http://localhost:8088/superset/dashboard/1/?native_filters_key=8TNRVjTeKm37iM9LWUB6EX-Z6hUKzsb-3BK6RuTaYCHmOLIwd75IMSdjyh913EeT&standalone=3";
+  const supersetUrl = import.meta.env.VITE_SUPERSET_DASHBOARD_URL || "http://localhost:8088/superset/dashboard/1/?native_filters_key=8TNRVjTeKm37iM9LWUB6EX-Z6hUKzsb-3BK6RuTaYCHmOLIwd75IMSdjyh913EeT&standalone=2";
 
   const handleLogout = () => {
     localStorage.removeItem('token');

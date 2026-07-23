@@ -1,3 +1,5 @@
+
+
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 
@@ -23,6 +25,16 @@ const Heardertable = {
     hanh_dong_khac_phuc: 'Hành động khắc phục',
     file_nguon: 'File nguồn',
     thoi_gian_dong_goi_gold: 'Thời gian đóng gói',
+    // [MỚI] cột phục vụ bảng tổng hợp / so sánh kỳ
+    tong_chi_tieu_danh_gia: 'Tổng chỉ tiêu đánh giá',
+    so_chi_tieu_dat: 'Số chỉ tiêu đạt',
+    so_chi_tieu_khong_dat: 'Số chỉ tiêu không đạt',
+    ty_le_hoan_thanh_phan_tram: 'Tỷ lệ hoàn thành (%)',
+    quy_danh_gia_ky_truoc: 'Kỳ trước',
+    muc_dat_numeric_ky_truoc: 'Mức đạt kỳ trước',
+    tang_truong_phan_tram: 'Tăng trưởng (%)',
+    ky_dau_tien_xuat_hien: 'Kỳ đầu tiên xuất hiện',
+    ky_gan_nhat_cap_nhat: 'Kỳ gần nhất cập nhật',
 }
 
 const GOLD_TABLE_LABELS = {
@@ -32,6 +44,12 @@ const GOLD_TABLE_LABELS = {
   dm_chi_tieu: 'Chú thích / Data Dictionary',
 };
 
+// [MỚI] Bảng gốc dùng để click-to-drill: chỉ bảng tổng hợp mới có nghĩa để
+// bấm vào 1 dòng rồi "đi xuống" chi tiết của đúng đơn vị đó.
+const DRILLABLE_SOURCE_TABLE = 'kpi_tong_hop_don_vi';
+// Khi drill xuống, mặc định nhảy sang bảng chi tiết đầy đủ.
+const DRILL_TARGET_TABLE = 'kpi_chi_tiet_dashboard';
+
 const PipelineDataExplorer = () => {
   const [status, setStatus] = useState({ bronze: false, silver: false, gold: false });
   const [activeLayer, setActiveLayer] = useState(null); // 'bronze' | 'silver' | 'gold' | null
@@ -39,6 +57,10 @@ const PipelineDataExplorer = () => {
   const [previewData, setPreviewData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // [MỚI] Đơn vị đang được lọc (drill-down từ tổng -> chi tiết).
+  // Lưu cả mã (để gọi API) lẫn tên đầy đủ (để hiển thị badge cho dễ đọc).
+  const [selectedUnit, setSelectedUnit] = useState(null); // { code, label } | null
 
   const authHeader = { Authorization: `Bearer ${localStorage.getItem('token')}` };
 
@@ -55,10 +77,16 @@ const PipelineDataExplorer = () => {
     setPreviewData(null);
     setLoading(true);
     try {
-      const url =
-        layer === 'gold'
-          ? `${API_URL}/pipeline/gold/preview?table=${activeGoldTable}&limit=50`
-          : `${API_URL}/pipeline/${layer}/preview?limit=50`;
+      let url;
+      if (layer === 'gold') {
+        const params = new URLSearchParams({ table: activeGoldTable, limit: 50 });
+        // [MỚI] Gắn thêm filter đơn vị nếu đang có, áp dụng cho cả 4 bảng Gold
+        // vì bảng nào cũng có cột nhom_don_vi.
+        if (selectedUnit) params.set('nhom_don_vi', selectedUnit.code);
+        url = `${API_URL}/pipeline/gold/preview?${params.toString()}`;
+      } else {
+        url = `${API_URL}/pipeline/${layer}/preview?limit=50`;
+      }
       const res = await axios.get(url, { headers: authHeader });
       setPreviewData(res.data);
     } catch (e) {
@@ -68,17 +96,32 @@ const PipelineDataExplorer = () => {
     }
   };
 
-  // Khi đổi bảng Gold trong lúc đang xem Gold, tự tải lại
+  // Khi đổi bảng Gold, hoặc đổi đơn vị đang lọc, trong lúc đang xem Gold -> tự tải lại
   useEffect(() => {
     if (activeLayer === 'gold') openLayer('gold');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeGoldTable]);
+  }, [activeGoldTable, selectedUnit]);
 
   const closeModal = () => {
     setActiveLayer(null);
     setPreviewData(null);
     setError('');
+    // [MỚI] Đóng modal thì bỏ luôn filter đơn vị, tránh lần mở sau bị lọc "ngầm"
+    // mà người dùng không nhớ vì sao thấy ít dữ liệu.
+    setSelectedUnit(null);
   };
+
+  // [MỚI] Xử lý click vào 1 dòng của bảng tổng hợp -> drill xuống bảng chi tiết
+  // đã lọc đúng đơn vị vừa click.
+  const handleRowDrillDown = (row) => {
+    if (activeGoldTable !== DRILLABLE_SOURCE_TABLE) return;
+    const code = row['nhom_don_vi'];
+    if (!code) return;
+    setSelectedUnit({ code, label: row['ten_phong_ban'] || code });
+    setActiveGoldTable(DRILL_TARGET_TABLE);
+  };
+
+  const clearUnitFilter = () => setSelectedUnit(null);
 
   const nodeClass = (layer) => {
     const isDone = status[layer];
@@ -149,7 +192,7 @@ const PipelineDataExplorer = () => {
 
             {/* Chọn bảng khi đang xem Gold (Gold có 4 bảng) */}
             {activeLayer === 'gold' && (
-              <div className="flex-inline gap-2 px-6 py-3 border-b bg-white">
+              <div className="flex items-center flex-wrap gap-2 px-6 py-3 border-b bg-white">
                 {Object.entries(GOLD_TABLE_LABELS).map(([key, label]) => (
                   <button
                     key={key}
@@ -163,6 +206,27 @@ const PipelineDataExplorer = () => {
                     {label}
                   </button>
                 ))}
+
+                {/* [MỚI] Badge hiển thị đơn vị đang lọc (kết quả drill-down) + nút bỏ lọc */}
+                {selectedUnit && (
+                  <span className="flex items-center gap-2 text-xs h-[40px] px-3 py-2 rounded-full border border-blue-300 bg-blue-50 text-blue-700 ml-2">
+                    🔎 Đang lọc theo đơn vị: <strong>{selectedUnit.label}</strong>
+                    <button
+                      onClick={clearUnitFilter}
+                      className="text-blue-500 hover:text-blue-800 font-bold leading-none ml-1"
+                      title="Bỏ lọc đơn vị"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* [MỚI] Gợi ý drill-down khi đang ở bảng tổng hợp và chưa lọc gì */}
+            {activeLayer === 'gold' && activeGoldTable === DRILLABLE_SOURCE_TABLE && !selectedUnit && !loading && (
+              <div className="px-6 py-2 text-xs text-gray-400 bg-white border-b">
+                💡 Click vào 1 dòng bên dưới để xem chi tiết đầy đủ của đơn vị đó.
               </div>
             )}
 
@@ -185,21 +249,41 @@ const PipelineDataExplorer = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {previewData.rows.map((row, i) => (
-                    
-                      <tr key={i} className="odd:bg-white even:bg-gray-50">
-                        <td className="px-3 py-1.5 border-b border-gray-100 whitespace-nowrap">
-                          {i + 1}
-                        </td>
-                        {previewData.columns.map((c) => (
-                          <td key={c} className="px-3 py-1.5 border-b border-gray-100 whitespace-nowrap">
-                            {String(row[c] ?? '')}
+                    {previewData.rows.map((row, i) => {
+                      const isDrillable =
+                        activeLayer === 'gold' && activeGoldTable === DRILLABLE_SOURCE_TABLE;
+                      return (
+                        <tr
+                          key={i}
+                          onClick={() => handleRowDrillDown(row)}
+                          className={`odd:bg-white even:bg-gray-50 ${
+                            isDrillable ? 'cursor-pointer hover:bg-blue-50' : ''
+                          }`}
+                          title={isDrillable ? 'Click để xem chi tiết đơn vị này' : undefined}
+                        >
+                          <td className="px-3 py-1.5 border-b border-gray-100 whitespace-nowrap">
+                            {i + 1}
                           </td>
-                        ))}
-                      </tr>
-                    ))}
+                          {previewData.columns.map((c) => (
+                            <td key={c} className="px-3 py-1.5 border-b border-gray-100 whitespace-nowrap">
+                              {String(row[c] ?? '')}
+                            </td>
+                          ))}
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
+              )}
+
+              {/* [MỚI] Trường hợp lọc ra rỗng: gợi ý bỏ lọc thay vì để trắng khó hiểu */}
+              {!loading && !error && previewData && previewData.rows.length === 0 && selectedUnit && (
+                <div className="text-center text-sm text-gray-400 py-10">
+                  Không có dữ liệu cho đơn vị "{selectedUnit.label}" ở bảng này.{' '}
+                  <button onClick={clearUnitFilter} className="text-blue-600 underline">
+                    Bỏ lọc
+                  </button>
+                </div>
               )}
             </div>
           </div>
