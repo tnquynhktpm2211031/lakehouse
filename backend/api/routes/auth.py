@@ -1,5 +1,5 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Body
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
@@ -11,31 +11,17 @@ from api.schemas.auth import UserLogin, UserCreate, UserResponse, Token, RoleUpd
 
 router = APIRouter()
 
-@router.post("/login", response_model=Token, summary="Đăng nhập hệ thống (Hỗ trợ Form Data & JSON)")
+@router.post("/login", response_model=Token, summary="Đăng nhập hệ thống (Form Data OAuth2)")
 async def login(
-    form_data: Optional[OAuth2PasswordRequestForm] = Depends(),
-    json_body: Optional[UserLogin] = Body(None),
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
     """
     Xác thực tài khoản và mật khẩu, trả về JWT Access Token cùng vai trò (role).
-    Hỗ trợ cả OAuth2 Password Form Data (cho frontend) lẫn JSON payload.
+    Đồng bộ hoàn toàn với OAuth2 Password Standard & Frontend React Form Data.
     """
-    username = None
-    password = None
-
-    if form_data and form_data.username:
-        username = form_data.username
-        password = form_data.password
-    elif json_body:
-        username = json_body.username
-        password = json_body.password
-
-    if not username or not password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Vui lòng cung cấp đầy đủ tên đăng nhập và mật khẩu"
-        )
+    username = form_data.username
+    password = form_data.password
 
     user = get_user(username=username, db=db)
     
@@ -87,7 +73,6 @@ async def create_user(
     """
     Tạo người dùng mới và lưu trữ vào cơ sở dữ liệu.
     """
-    # Kiểm tra xem user đã tồn tại chưa
     try:
         existing_user = db.query(User).filter(User.username == user_in.username).first()
         if existing_user:
