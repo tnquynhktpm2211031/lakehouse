@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from api.dependencies import get_current_user
 from db.minio_client import minio_client
 from core.config import MINIO_BUCKET_NAME
-
+from core.config import AIRFLOW_WEBSERVER_URL
 router = APIRouter()
 @router.get("/")
 def read_root():
@@ -31,7 +31,7 @@ async def upload_file(file: UploadFile = File(...), current_user: dict = Depends
         )
 
         # Trigger Airflow Pipeline
-        from core.config import AIRFLOW_WEBSERVER_URL
+       
 
         airflow_url = f"{AIRFLOW_WEBSERVER_URL}/api/v1/dags/lakehouse_pipeline/dagRuns"
         try:
